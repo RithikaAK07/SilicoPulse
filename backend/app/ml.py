@@ -16,8 +16,9 @@ import numpy as np
 import polars as pl
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_selection import mutual_info_classif
-from sklearn.metrics import roc_auc_score
-from sklearn.model_selection import train_test_split
+from sklearn.metrics import (average_precision_score, brier_score_loss, confusion_matrix, mean_absolute_error,
+                             precision_recall_fscore_support, r2_score, roc_auc_score)
+from sklearn.model_selection import StratifiedKFold, train_test_split
 
 try:
     import lightgbm as lgb
@@ -69,6 +70,7 @@ class ModelBundle:
     importance_full: dict[str, float]
     mutual_info: dict[str, float]
     correlation: dict[str, float]
+    validation: dict = field(default_factory=dict)
 
     # ------------------------------------------------------------------ predict
     def frame_from_config(self, configs: list[dict]) -> pl.DataFrame:
@@ -130,6 +132,70 @@ def _jsonable(v):
     return v
 
 
+RF_MAX_ROWS = 40_000  # bootstrap rows per tree on very large datasets
+CV_MAX_ROWS = 30_000  # rows used for cross-validation on very large datasets
+
+
+def _new_risk_model(n_estimators: int = 350):
+    if HAS_LGB:
+        return lgb.LGBMClassifier(n_estimators=n_estimators, learning_rate=0.05, num_leaves=31, min_child_samples=20,
+                                  subsample=0.9, subsample_freq=1, colsample_bytree=0.8, verbose=-1)
+    return HistGradientBoostingClassifier(max_iter=n_estimators, learning_rate=0.06)
+
+
+def validate(model, Xtr, Xte, ytr, yte, columns: list[str], throughput: np.ndarray | None = None) -> dict:
+    """Hold-out + cross-validated evaluation of the pre-execution failure-risk model."""
+    p = _proba(model, Xte)
+    pred = (p >= 0.5).astype(int)
+    prec, rec, f1, _ = precision_recall_fscore_support(yte, pred, average="binary", zero_division=0)
+    grid = np.round(np.arange(0.05, 0.951, 0.01), 2)
+    f1s = []
+    for t in grid:
+        pr, rc, f, _ = precision_recall_fscore_support(yte, (p >= t).astype(int), average="binary", zero_division=0)
+        f1s.append((f, pr, rc, t))
+    best_f1, best_p, best_r, best_t = max(f1s)
+    tn, fp, fn, tp = confusion_matrix(yte, (p >= best_t).astype(int), labels=[0, 1]).ravel()
+    bins = np.linspace(0, 1, 11)
+    which = np.clip(np.digitize(p, bins) - 1, 0, 9)
+    calibration = [{"bin": f"{bins[b]:.1f}-{bins[b + 1]:.1f}", "mean_predicted": round(float(p[which == b].mean()), 4),
+                    "observed_rate": round(float(yte[which == b].mean()), 4), "count": int((which == b).sum())}
+                   for b in range(10) if (which == b).sum() > 0]
+    # k-fold CV on the training split (subsampled for very large data)
+    rng = np.random.default_rng(1)
+    idx = np.arange(len(ytr)) if len(ytr) <= CV_MAX_ROWS else rng.choice(len(ytr), CV_MAX_ROWS, replace=False)
+    folds = []
+    for tr_i, va_i in StratifiedKFold(n_splits=5, shuffle=True, random_state=2).split(Xtr[idx], ytr[idx]):
+        m = _new_risk_model(200)
+        m.fit(Xtr[idx][tr_i], ytr[idx][tr_i])
+        folds.append(float(roc_auc_score(ytr[idx][va_i], _proba(m, Xtr[idx][va_i]))))
+    out = {
+        "split": {"train": int(len(ytr)), "test": int(len(yte)),
+                  "strategy": "stratified 80/20 hold-out test set + 5-fold stratified CV on the training split"},
+        "test_size": int(len(yte)),
+        "class_balance": {"failure_rate_train": round(float(ytr.mean()), 4), "failure_rate_test": round(float(yte.mean()), 4)},
+        "holdout": {"roc_auc": round(float(roc_auc_score(yte, p)), 4), "pr_auc": round(float(average_precision_score(yte, p)), 4),
+                    "brier": round(float(brier_score_loss(yte, p)), 4), "threshold": 0.5,
+                    "precision": round(float(prec), 4), "recall": round(float(rec), 4), "f1": round(float(f1), 4),
+                    "best_f1_threshold": float(best_t), "best_f1": round(float(best_f1), 4),
+                    "precision_at_best": round(float(best_p), 4), "recall_at_best": round(float(best_r), 4),
+                    "confusion_matrix_at_best": {"tn": int(tn), "fp": int(fp), "fn": int(fn), "tp": int(tp)}},
+        "cv": {"folds": 5, "rows_used": int(len(idx)), "roc_auc_mean": round(float(np.mean(folds)), 4),
+               "roc_auc_std": round(float(np.std(folds)), 4), "roc_auc_folds": [round(x, 4) for x in folds]},
+        "calibration": calibration,
+        "model": "LightGBM gradient boosting (pre-execution features: configuration + context)" if HAS_LGB else "HistGradientBoosting",
+    }
+    if HAS_LGB:
+        gain = model.booster_.feature_importance(importance_type="gain")
+        tot = gain.sum() or 1
+        order = np.argsort(-gain)[:15]
+        out["feature_importance"] = [{"feature": columns[j], "gain_share": round(float(gain[j] / tot), 4)} for j in order]
+        sample = Xte[rng.choice(len(Xte), min(2000, len(Xte)), replace=False)]
+        contrib = np.abs(model.predict(sample, pred_contrib=True)[:, :-1]).mean(axis=0)
+        order = np.argsort(-contrib)[:12]
+        out["global_shap"] = [{"feature": columns[j], "mean_abs_shap": round(float(contrib[j]), 4)} for j in order]
+    return out
+
+
 def train(df: pl.DataFrame, meta: dict) -> ModelBundle:
     config_cols = meta["config_params"]
     random_cols = meta["random_vars"]
@@ -143,7 +209,9 @@ def train(df: pl.DataFrame, meta: dict) -> ModelBundle:
     Xf = full_enc.transform(df)
     Xp = pre_enc.transform(df)
 
-    full_rf = RandomForestClassifier(n_estimators=160, max_depth=14, min_samples_leaf=3, n_jobs=-1, random_state=7, class_weight="balanced_subsample")
+    rf_rows = None if len(df) <= RF_MAX_ROWS else RF_MAX_ROWS / len(df)
+    full_rf = RandomForestClassifier(n_estimators=160, max_depth=14, min_samples_leaf=3, n_jobs=-1, random_state=7,
+                                     class_weight="balanced_subsample", max_samples=rf_rows)
     full_rf.fit(Xf, y)
     importance_full = dict(zip(full_cols, full_rf.feature_importances_.round(5).tolist()))
 
@@ -163,9 +231,10 @@ def train(df: pl.DataFrame, meta: dict) -> ModelBundle:
         risk_model = HistGradientBoostingClassifier(max_iter=300, learning_rate=0.06)
     risk_model.fit(Xtr, ytr)
     auc = float(roc_auc_score(yte, _proba(risk_model, Xte)))
+    validation = validate(risk_model, Xtr, Xte, ytr, yte, pre_cols, df["throughput_mbps"].to_numpy())
     risk_model.fit(Xp, y)
 
-    risk_rf = RandomForestClassifier(n_estimators=150, max_depth=12, min_samples_leaf=4, n_jobs=-1, random_state=5)
+    risk_rf = RandomForestClassifier(n_estimators=150, max_depth=12, min_samples_leaf=4, n_jobs=-1, random_state=5, max_samples=rf_rows)
     risk_rf.fit(Xp, y)
 
     ok = y == 0
@@ -173,7 +242,17 @@ def train(df: pl.DataFrame, meta: dict) -> ModelBundle:
         tput_model = lgb.LGBMRegressor(n_estimators=300, learning_rate=0.05, num_leaves=31, verbose=-1)
     else:
         tput_model = HistGradientBoostingRegressor(max_iter=300)
-    tput_model.fit(Xp[ok], df["throughput_mbps"].to_numpy()[ok])
+    t_all = df["throughput_mbps"].to_numpy()
+    if ok.sum() >= 50 and np.ptp(t_all[ok]) > 0:
+        tr_i, te_i = train_test_split(np.flatnonzero(ok), test_size=0.2, random_state=11)
+        probe = lgb.LGBMRegressor(n_estimators=300, learning_rate=0.05, num_leaves=31, verbose=-1) if HAS_LGB else HistGradientBoostingRegressor(max_iter=300)
+        probe.fit(Xp[tr_i], t_all[tr_i])
+        pt = probe.predict(Xp[te_i])
+        validation["throughput_model"] = {"r2": round(float(r2_score(t_all[te_i], pt)), 4), "mae": round(float(mean_absolute_error(t_all[te_i], pt)), 2),
+                                          "test_rows": int(len(te_i))}
+    else:
+        validation["throughput_model"] = {"note": "throughput not available or constant"}
+    tput_model.fit(Xp[ok], t_all[ok])
 
     defaults, choices = {}, {}
     key_choice = {p["name"]: p["choices"] for p in meta["key_params"]}
@@ -188,12 +267,52 @@ def train(df: pl.DataFrame, meta: dict) -> ModelBundle:
         meta=meta, full_enc=full_enc, pre_enc=pre_enc, full_rf=full_rf, risk_model=risk_model, risk_rf=risk_rf,
         tput_model=tput_model, defaults=defaults, choices=choices, auc=round(auc, 4),
         tput_scale=float(np.percentile(df["throughput_mbps"].to_numpy()[ok], 95)),
-        importance_full=importance_full, mutual_info=mutual_info, correlation=correlation,
+        importance_full=importance_full, mutual_info=mutual_info, correlation=correlation, validation=validation,
     )
 
 
-def recommend(bundle: ModelBundle, context: dict, n_candidates: int = 4000, max_risk: float = 0.05, seed: int = 0) -> list[dict]:
-    """Random search over the key-parameter space + greedy refinement of generic flags."""
+def _norm(v) -> str:
+    if isinstance(v, (np.integer, np.floating)):
+        v = v.item()
+    if isinstance(v, float) and v.is_integer():
+        v = int(v)
+    return str(v)
+
+
+def _support(df: pl.DataFrame, key_params: list[str], cands: list[dict], max_profiles: int = 5000):
+    """Distance (number of differing key parameters) from each candidate to the nearest observed
+    configuration, plus that configuration's observed runs / failure rate."""
+    prof = df.group_by(key_params).agg(pl.len().alias("n"), pl.col("failed").mean().alias("fr")).sort("n", descending=True).head(max_profiles)
+    codes: dict[str, dict[str, int]] = {}
+    O = np.zeros((len(prof), len(key_params)), dtype=np.int32)
+    C = np.zeros((len(cands), len(key_params)), dtype=np.int32)
+    for j, k in enumerate(key_params):
+        m = codes.setdefault(k, {})
+        O[:, j] = [m.setdefault(_norm(v), len(m)) for v in prof[k].to_list()]
+        C[:, j] = [m.setdefault(_norm(c[k]), len(m)) for c in cands]
+    dist = np.zeros((len(cands), len(prof)), dtype=np.int16)
+    for j in range(len(key_params)):
+        dist += C[:, None, j] != O[None, :, j]
+    nearest = dist.argmin(axis=1)
+    return dist[np.arange(len(cands)), nearest], prof["n"].to_numpy()[nearest], prof["fr"].to_numpy()[nearest]
+
+
+def _pareto(risk: np.ndarray, tput: np.ndarray) -> np.ndarray:
+    order = np.lexsort((risk, -tput))
+    mask = np.zeros(len(risk), dtype=bool)
+    best = np.inf
+    for i in order:
+        if risk[i] < best:
+            mask[i], best = True, risk[i]
+    return mask
+
+
+def recommend(bundle: ModelBundle, context: dict, n_candidates: int = 4000, max_risk: float = 0.05, seed: int = 0,
+              df: pl.DataFrame | None = None) -> list[dict]:
+    """Random search over the key-parameter space + greedy refinement of generic flags.
+
+    With `df`, candidates far from any observed configuration are penalised and every result
+    reports its training-data support, so extrapolations are explicit."""
     rng = np.random.default_rng(seed)
     key_params = [p["name"] for p in bundle.meta["key_params"]]
     cands = []
@@ -205,6 +324,11 @@ def recommend(bundle: ModelBundle, context: dict, n_candidates: int = 4000, max_
     risk = 0.6 * pred["risk"] + 0.4 * pred["risk_rf"]
     tput = pred["throughput"]
     utility = (tput / bundle.tput_scale) * (1 - risk) ** 3 - 2.0 * np.clip(risk - max_risk, 0, None)
+    dist = None
+    if df is not None and len(df):
+        dist, near_n, near_fr = _support(df, key_params, cands)
+        utility = utility - 0.06 * np.clip(dist - 1, 0, None)  # prefer configurations the data actually covers
+    pareto = _pareto(risk, tput)
     order = np.argsort(-utility)
 
     # greedy flip of the most influential generic flags on the winner
@@ -223,15 +347,38 @@ def recommend(bundle: ModelBundle, context: dict, n_candidates: int = 4000, max_
         if u.max() > best_u:
             best_u, best = u.max(), trials[int(u.argmax())]
 
+    pick_idx = [int(order[0])] + [int(i) for i in order[1:5]]
     picks = [best] + [cands[i] for i in order[1:5]]
     final = bundle.predict(picks)
+    hi_tput = int(np.argmax(tput))
+    lo_risk = int(np.argmin(risk))
     out = []
     for i, cfg in enumerate(picks):
         p_gb, p_rf = float(final["risk"][i]), float(final["risk_rf"][i])
         r = 0.6 * p_gb + 0.4 * p_rf
         agreement = 1 - min(1.0, abs(p_gb - p_rf) * 4)
-        conf = 0.5 * agreement + 0.3 * (1 - min(1.0, r * 5)) + 0.2 * bundle.auc
-        out.append({
+        extra = {}
+        if dist is not None:
+            ci = pick_idx[i]
+            d = int(dist[ci])
+            exact = int(near_n[ci]) if d == 0 else 0
+            support_factor = 1.0 if exact >= 5 else 0.7 if d <= 1 else 0.4 if d == 2 else 0.1
+            conf = 0.4 * agreement + 0.25 * (1 - min(1.0, r * 5)) + 0.15 * bundle.auc + 0.2 * support_factor
+            extra["support"] = {"exact_matching_runs": exact, "nearest_observed_distance": d,
+                                "nearest_observed_runs": int(near_n[ci]), "nearest_observed_failure_rate": round(float(near_fr[ci]), 4),
+                                "key_parameters_compared": len(key_params)}
+            extra["extrapolation"] = d > 2
+        else:
+            conf = 0.5 * agreement + 0.3 * (1 - min(1.0, r * 5)) + 0.2 * bundle.auc
+        shap = bundle.shap({**context, **cfg}, top=8)
+        extra["uncertainty"] = {"model_disagreement": round(abs(p_gb - p_rf), 4), "risk_range": [round(min(p_gb, p_rf), 4), round(max(p_gb, p_rf), 4)]}
+        extra["pareto_optimal"] = bool(pareto[pick_idx[i]]) if i else bool(pareto[pick_idx[0]])
+        extra["why"] = [f"{s['feature']}={s['value']} lowers predicted failure log-odds by {abs(s['contribution']):.2f}" for s in shap if s["contribution"] < 0][:3]
+        extra["tradeoffs"] = [
+            f"vs highest-throughput candidate: {float(tput[hi_tput]) - float(final['throughput'][i]):+,.0f} MB/s, risk {float(risk[hi_tput]) - r:+.1%}",
+            f"vs lowest-risk candidate: {float(tput[lo_risk]) - float(final['throughput'][i]):+,.0f} MB/s, risk {float(risk[lo_risk]) - r:+.1%}",
+        ]
+        out.append({**extra, 
             "rank": i + 1,
             "config": {k: _jsonable(v) if not isinstance(v, (np.integer, np.floating)) else _jsonable(v.item()) for k, v in cfg.items() if k in key_params or k in generic},
             "context": context,

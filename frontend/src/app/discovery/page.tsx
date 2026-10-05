@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ChartTooltip, ErrorState, Loading, PageHeader, axisProps } from "@/components/common";
+import { StrengthBadge, fmtP } from "@/components/evidence";
 
 export default function DiscoveryPage() {
   const { data, error, isLoading } = useDiscovery();
@@ -186,6 +187,8 @@ function PairTable({ title, desc, rows, good }: { title: string; desc: string; r
               <th className="py-1.5 text-right font-medium">Runs</th>
               <th className="py-1.5 text-right font-medium">Fail rate</th>
               <th className="py-1.5 text-right font-medium">{good ? "MB/s" : "Lift"}</th>
+              {!good && <th className="py-1.5 text-right font-medium">p</th>}
+              {!good && <th className="py-1.5 pl-2 text-left font-medium">Evidence</th>}
             </tr>
           </thead>
           <tbody className="tabular-nums">
@@ -196,6 +199,8 @@ function PairTable({ title, desc, rows, good }: { title: string; desc: string; r
                 <td className="py-1.5 text-right">{r.runs}</td>
                 <td className="py-1.5 text-right" style={{ color: good ? STATUS_INK.good : STATUS_INK.critical }}>{pct(r.fail_rate)}</td>
                 <td className="py-1.5 text-right">{good ? num(r.throughput) : `${r.lift}×`}</td>
+                {!good && <td className="py-1.5 text-right">{fmtP(r.p_value)}</td>}
+                {!good && <td className="py-1.5 pl-2"><StrengthBadge strength={r.evidence_strength} /></td>}
               </tr>
             ))}
           </tbody>

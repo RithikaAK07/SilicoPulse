@@ -67,10 +67,21 @@ export function KpiCard({ label, value, sub, icon: Icon, accent }: { label: stri
   );
 }
 
+/** LLMs sometimes emit inline LaTeX ($n=517$, $\le 8$); render it as plain text instead of raw dollar signs. */
+function stripInlineMath(md: string) {
+  return md
+    .replace(/\$([^$\n]{1,60})\$/g, (_, inner: string) => inner)
+    .replace(/\\(le|leq)\b/g, "≤")
+    .replace(/\\(ge|geq)\b/g, "≥")
+    .replace(/\\times\b/g, "×")
+    .replace(/\\approx\b/g, "≈")
+    .replace(/\\%/g, "%");
+}
+
 export function Markdown({ children }: { children: string }) {
   return (
     <div className="prose-hub text-sm leading-relaxed text-slate-800">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{children}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{stripInlineMath(children)}</ReactMarkdown>
     </div>
   );
 }

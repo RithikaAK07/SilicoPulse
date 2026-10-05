@@ -6,3 +6,7 @@ __pycache__/
 *.pyc 
 .env 
 .env.local 
+backend/data/
+.pytest_cache/
+*.tsbuildinfo
+.railway/

@@ -257,6 +257,8 @@ def canonicalize(raw_df: pl.DataFrame, mapping: dict, filename: str) -> tuple[pl
     def safe(name: str) -> str:
         return f"x_{name}" if name in RESERVED else name
 
+    used = sorted(special | {c for c, r in roles.items() if r != "ignore"})
+    missing = {c: int(df[c].null_count()) for c in used if df[c].null_count()}  # recorded before neutral fills
     config_cols = [c for c, r in roles.items() if r == "config"]
     if not config_cols:
         raise HTTPException(422, "Mark at least one column as a configuration parameter")
@@ -387,6 +389,8 @@ def canonicalize(raw_df: pl.DataFrame, mapping: dict, filename: str) -> tuple[pl
         "log_lines": int(frame["log_trace"].str.count_matches("\n").sum() + n),
         "synthetic_columns": synthetic,
         "leakage_dropped": leaked,
+        "missing_values": missing,
+        "log_coverage": round(float((df[mapping["log"]].cast(pl.Utf8).fill_null("").str.strip_chars() != "").mean()), 4) if mapping.get("log") else 0.0,
         "source": "uploaded",
         "filename": filename,
     }

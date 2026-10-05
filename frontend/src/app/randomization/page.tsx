@@ -39,6 +39,7 @@ function Content({ data }: { data: any }) {
   const classes = Object.fromEntries(det.failure_classes.map((c: any) => [c.class, c.count]));
   const detCount = classes.deterministic ?? 0;
   const stoCount = (classes.stochastic ?? 0) + (classes.stable ?? 0);
+  const insufficient = classes.insufficient ?? 0;
   const flagged = data.seeds.filter((s: any) => s.flag);
   const curveVars = Object.keys(data.curves);
   const hm = pv ? data.heatmaps[pv] : null;
@@ -135,7 +136,7 @@ function Content({ data }: { data: any }) {
             <div>
               <CardTitle>Seed repeatability — observed vs expected failure rate</CardTitle>
               <CardDescription>
-                Expected = configuration-only ML model. Seeds far above the diagonal (z &gt; 3) fail reproducibly regardless of config.
+                Expected = configuration-only ML model. Flagged seeds have ≥ {data.seed_policy?.min_runs ?? 20} runs and a Bonferroni-significant excess (α={data.seed_policy?.alpha ?? 0.01}).
               </CardDescription>
             </div>
           </CardHeader>
@@ -159,7 +160,9 @@ function Content({ data }: { data: any }) {
                       <div className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-700">
                         <div className="font-medium text-slate-900">Seed {p.seed} {p.flag && <span style={{ color: STATUS_INK.critical }}>· anomalous</span>}</div>
                         <div>Observed {pct(p.observed)} vs expected {pct(p.expected)}</div>
-                        <div>Lift {p.lift}× · z = {p.z} · repeatability {p.repeatability}</div>
+                        <div>Lift {p.lift}× · z = {p.z} · p = {p.p_value != null ? (p.p_value < 0.001 ? p.p_value.toExponential(1) : p.p_value.toFixed(3)) : "–"}</div>
+                        {p.ci95 && <div>95% CI {pct(p.ci95[0])} – {pct(p.ci95[1])}</div>}
+                        {p.sufficient_samples === false && <div className="text-amber-700">Too few runs to score</div>}
                         <div>{p.runs} runs</div>
                       </div>
                     ) : null;
@@ -167,7 +170,7 @@ function Content({ data }: { data: any }) {
                 />
                 <Legend wrapperStyle={{ fontSize: 12 }} verticalAlign="top" height={28} />
                 <Scatter isAnimationActive={false} name="Normal seed" data={data.seeds.filter((s: any) => !s.flag)} fill={SERIES[0]} fillOpacity={0.7} />
-                <Scatter isAnimationActive={false} name="Anomalous seed (z > 3)" data={flagged} fill={STATUS.critical} shape="diamond" />
+                <Scatter isAnimationActive={false} name="Anomalous seed (significant)" data={flagged} fill={STATUS.critical} shape="diamond" />
               </ScatterChart>
             </ResponsiveContainer>
             )}
@@ -196,6 +199,7 @@ function Content({ data }: { data: any }) {
                 <div className="text-xs text-slate-500">Stochastic failures</div>
                 <div className="text-2xl font-semibold">{num(stoCount)}</div>
                 <div className="text-xs text-slate-500">{pct(stoCount / (detCount + stoCount))} of failures</div>
+                {insufficient > 0 && <div className="mt-1 text-[11px] text-amber-700">{num(insufficient)} more lack enough repeats/seeds to classify</div>}
               </div>
             </div>
             <div className="h-64">
@@ -293,13 +297,20 @@ function DriftSection({ d }: { d: any }) {
         <CardHeader>
           <div>
             <CardTitle>Randomization drift visualizer</CardTitle>
-            <CardDescription>How randomized environment variables drift over the campaign (daily mean with p95 band) and when the daily mean breaches its drift limit.</CardDescription>
+            <CardDescription>How randomized environment variables drift over the campaign (daily mean and p95). The dashed line is the risk threshold learned from this dataset, or a labelled reference line when no significant threshold exists.</CardDescription>
           </div>
           <div className="flex flex-wrap gap-2">
             {d.crossings.map((c: any) => (
-              <Badge key={c.variable} color={c.first_crossing ? STATUS.critical : STATUS.good}>
+              <Badge
+                key={c.variable}
+                color={(c.late_share_beyond_threshold ?? 0) > 1.5 * (c.early_share_beyond_threshold ?? 0) && c.late_share_beyond_threshold > 0.05 ? STATUS.critical : c.first_crossing ? STATUS.warning : STATUS.good}
+              >
                 {c.first_crossing ? <AlertTriangle className="h-3 w-3" /> : null}
-                {c.variable}: {c.first_crossing ? `crossed ${c.first_crossing} · ${c.days_above}d above` : "within limits"}
+                {c.variable}
+                {c.limit_source === "learned" ? ` > ${c.threshold} (learned)` : ""}:{" "}
+                {c.early_share_beyond_threshold != null
+                  ? `${pct(c.early_share_beyond_threshold)} → ${pct(c.late_share_beyond_threshold)} of runs beyond`
+                  : c.first_crossing ? `crossed ${c.first_crossing} · ${c.days_above}d above` : "within limits"}
               </Badge>
             ))}
           </div>

@@ -10,9 +10,9 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from . import ai, analytics, ml
-from . import auth, copilot_agent, upload_handler
+from . import auth, copilot_agent, evidence, insights, upload_handler
 from .auth import get_current_user, require_permission
-from .config import gemini_key
+from .config import CORS_ORIGINS, gemini_key
 from .store import store
 
 
@@ -28,7 +28,7 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(CORSMiddleware, allow_origins=CORS_ORIGINS, allow_methods=["*"], allow_headers=["*"])
 
 # Every analytics/ML/AI route requires a valid JWT; /api/health and /api/login stay public.
 api = APIRouter(dependencies=[Depends(get_current_user)])
@@ -58,6 +58,7 @@ class ChatMessage(BaseModel):
 
 class ChatReq(BaseModel):
     messages: list[ChatMessage] = Field(..., min_length=1, max_length=60)
+    filters: dict = Field(default_factory=dict)  # active dashboard filters (hardware, environment, workload, dates, ...)
 
 
 class CopilotReq(BaseModel):
@@ -70,7 +71,7 @@ def _filters(environment=None, hardware=None, workload=None, date_from=None, dat
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "runs": 0 if store.df is None else len(store.df)}
+    return {"status": "ok", "runs": 0 if store.df is None else len(store.df), "analytics_cache": store.warm_status}
 
 
 @api.get("/api/meta")
@@ -155,17 +156,66 @@ def predict(req: PredictReq):
     risk = float(0.6 * p["risk"][0] + 0.4 * p["risk_rf"][0])
     return {"failure_risk": round(risk, 4), "risk_gbm": round(float(p["risk"][0]), 4), "risk_rf": round(float(p["risk_rf"][0]), 4),
             "expected_throughput": round(float(p["throughput"][0]), 1), "shap": store.bundle.shap(cfg, top=12),
-            "base_rate": round(float(store.df["failed"].mean()), 4)}
+            "base_rate": round(float(store.df["failed"].mean()), 4),
+            "uncertainty": {"model_disagreement": round(abs(float(p["risk"][0]) - float(p["risk_rf"][0])), 4)},
+            "model_quality": {"roc_auc": store.bundle.auc, "cv_roc_auc_mean": store.bundle.validation.get("cv", {}).get("roc_auc_mean"),
+                              "brier": store.bundle.validation.get("holdout", {}).get("brier")}}
 
 
 @api.post("/api/recommend")
 async def recommend(req: RecommendReq):
     key = f"recommend::{sorted(req.context.items())}::{req.max_risk}"
-    recs = await run_in_threadpool(lambda: store.cached(key, lambda: ml.recommend(store.bundle, req.context, max_risk=req.max_risk)))
+    recs = await run_in_threadpool(lambda: store.cached(key, lambda: ml.recommend(store.bundle, req.context, max_risk=req.max_risk, df=store.df)))
     best = recs[0]
     shap = store.bundle.shap({**best["context"], **best["config"]}, top=10)
     explanation, source = await ai.explain_recommendation(best, shap)
     return {"recommendations": recs, "shap": shap, "explanation": explanation, "source": source}
+
+
+# --------------------------------------------------------------------------- evidence layer (new, additive)
+def _ev_filters(environment=None, hardware=None, workload=None, date_from=None, date_to=None, signature=None, config_id=None, seed=None) -> dict:
+    return evidence.clean_filters({"environment": environment, "hardware": hardware, "workload": workload, "date_from": date_from,
+                                   "date_to": date_to, "signature": signature, "config_id": config_id, "seed": seed})
+
+
+@api.get("/api/insights")
+def get_insights(environment: str | None = None, hardware: str | None = None, workload: str | None = None, date_from: str | None = None,
+                 date_to: str | None = None, signature: str | None = None, config_id: str | None = None, seed: int | None = None):
+    """Structured, evidence-backed insights for the (optionally filtered) active dataset."""
+    f = _ev_filters(environment, hardware, workload, date_from, date_to, signature, config_id, seed)
+    return insights.insights(f)
+
+
+@api.get("/api/insights/{section}")
+def get_insight_section(section: str, environment: str | None = None, hardware: str | None = None, workload: str | None = None,
+                        date_from: str | None = None, date_to: str | None = None, signature: str | None = None,
+                        config_id: str | None = None, seed: int | None = None):
+    f = _ev_filters(environment, hardware, workload, date_from, date_to, signature, config_id, seed)
+    sections = {
+        "parameters": lambda: evidence.parameter_risk(f),
+        "pairs": lambda: insights.toxic_pairs(f),
+        "environment": lambda: {"thresholds": evidence.environment_thresholds(f),
+                                "drift": analytics.drift()["crossings"] if not f else None},
+        "signatures": lambda: insights.failure_signatures(f),
+        "hardware": lambda: insights.hardware_comparison(f),
+        "guardrails": lambda: insights.guardrails(f),
+        "seeds": lambda: {"seeds": analytics.seed_points(), "policy": analytics.randomization()["seed_policy"]},
+        "determinism": lambda: {k: v for k, v in analytics.determinism().items() if k != "clusters"},
+    }
+    if section not in sections:
+        raise HTTPException(404, f"Unknown section. Available: {', '.join(sections)}")
+    return sections[section]()
+
+
+@api.get("/api/data-quality")
+def data_quality():
+    return insights.data_quality()
+
+
+@api.get("/api/model/validation")
+def model_validation():
+    b = store.bundle
+    return {"auc": b.auc, **b.validation}
 
 
 @api.post("/api/copilot/chat")
@@ -174,7 +224,7 @@ async def copilot_chat(req: ChatReq):
     msgs = [m.model_dump() for m in req.messages]
     if msgs[-1]["role"] != "user" or not msgs[-1]["content"].strip():
         raise HTTPException(422, "The last message must be a non-empty user message")
-    return StreamingResponse(copilot_agent.chat_stream(msgs), media_type="text/event-stream",
+    return StreamingResponse(copilot_agent.chat_stream(msgs, evidence.clean_filters(req.filters)), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 

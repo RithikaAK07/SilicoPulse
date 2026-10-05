@@ -44,6 +44,10 @@ export interface ChatMessage {
   suggestions?: string[];
   source?: string;
   error?: { message: string; retryAfter?: number | null };
+  intents?: string[];
+  filters?: Record<string, string>;
+  evidence?: { title: string; category: string; severity: string; finding: string; evidence_strength?: string | null; evidence: Record<string, any> }[];
+  grounding?: { figures: number; matched: number; unmatched: string[] };
 }
 
 interface Chat {

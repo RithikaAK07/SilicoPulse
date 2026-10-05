@@ -32,6 +32,8 @@ class Store:
         self.cache: dict = {}
         self.train_seconds = 0.0
         self.activated_at = 0.0
+        self._key_locks: dict[str, threading.Lock] = {}
+        self.warm_status = {"state": "idle", "seconds": 0.0}
 
     def load_or_generate(self) -> None:
         if UPLOAD_PATH.exists() and UPLOAD_META_PATH.exists():
@@ -77,6 +79,25 @@ class Store:
             self.arrow = df.to_arrow()
             self.train_seconds = time.perf_counter() - t0
             self.activated_at = time.time()
+        threading.Thread(target=self._warm, args=(self.activated_at,), daemon=True).start()
+
+    def _warm(self, version: float) -> None:
+        """Pre-compute the heavy analytics in the background so the first page loads stay fast (100K+ runs)."""
+        from . import analytics, insights  # local import: those modules import the store
+
+        t0 = time.perf_counter()
+        self.warm_status = {"state": "warming", "seconds": 0.0}
+        jobs = [analytics.discovery, analytics.randomization, analytics.root_cause, analytics.drift,
+                insights.data_quality, lambda: insights.insights({}), lambda: insights.guardrails({})]
+        for job in jobs:
+            if version != self.activated_at:  # a newer dataset was activated meanwhile
+                return
+            try:
+                job()
+            except Exception as e:  # warm-up is best effort; the request path reports real errors
+                self.warm_status = {"state": f"error: {type(e).__name__}: {e}", "seconds": round(time.perf_counter() - t0, 2)}
+                return
+        self.warm_status = {"state": "ready", "seconds": round(time.perf_counter() - t0, 2)}
 
     def dataset_status(self) -> dict:
         m = self.meta
@@ -106,9 +127,16 @@ class Store:
             con.close()
 
     def cached(self, key: str, fn):
-        if key not in self.cache:
-            self.cache[key] = fn()
-        return self.cache[key]
+        """Memoise per active dataset; a per-key lock stops concurrent requests computing the same thing twice."""
+        cache = self.cache
+        if key in cache:
+            return cache[key]
+        with self.lock:
+            lk = self._key_locks.setdefault(key, threading.Lock())
+        with lk:
+            if key not in cache:
+                cache[key] = fn()
+            return cache[key]
 
 
 store = Store()

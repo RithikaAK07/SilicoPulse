@@ -16,8 +16,8 @@ export function DriftChart({ series, meanKey, p95Key, threshold, color, unit }: 
         datasets: [
           { label: "Daily mean", data: series.map((s) => s[meanKey]), borderColor: color, backgroundColor: color, borderWidth: 2, pointRadius: 0, tension: 0.3 },
           { label: "Daily p95", data: series.map((s) => s[p95Key]), borderColor: `${color}99`, borderDash: [4, 3], borderWidth: 1.5, pointRadius: 0, tension: 0.3 },
-          { label: "Mean above limit", data: above, borderColor: "transparent", backgroundColor: STATUS.critical, pointRadius: 3, pointHoverRadius: 5, showLine: false },
-          { label: `Drift limit (${threshold}${unit})`, data: labels.map(() => threshold), borderColor: STATUS.critical, borderWidth: 1, borderDash: [6, 4], pointRadius: 0 },
+          { label: "Daily mean beyond threshold", data: above, borderColor: "transparent", backgroundColor: STATUS.critical, pointRadius: 3, pointHoverRadius: 5, showLine: false },
+          { label: `Risk threshold (${threshold}${unit})`, data: labels.map(() => threshold), borderColor: STATUS.critical, borderWidth: 1, borderDash: [6, 4], pointRadius: 0 },
         ],
       }}
       options={{

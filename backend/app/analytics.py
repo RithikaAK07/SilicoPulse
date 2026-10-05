@@ -15,12 +15,13 @@ from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 
+from . import evidence, stats
+from .config import MIN_PAIR_SAMPLES, MIN_PROFILE_REPEATS, MIN_PROFILE_SEEDS, MIN_SEED_RUNS, SIGNIFICANCE_ALPHA
 from .generator import SIGNATURES
 from .store import store
 
-THRESHOLDS = {"temperature_c": 60.0, "timing_jitter_us": 22.0, "traffic_intensity": 0.9}
-# Daily-mean drift limits: the operating envelope a randomized variable should stay inside
-DRIFT_LIMITS = {"temperature_c": 55.0, "timing_jitter_us": 12.0, "traffic_intensity": 0.62}
+# Risk thresholds for randomized variables are LEARNED from the active dataset (evidence.py);
+# nothing here assumes benchmark-specific limits such as a fixed temperature.
 DETERMINISTIC_FAIL_RATE = 0.8
 
 
@@ -144,6 +145,10 @@ def discovery() -> dict:
             best_fail = pnt["fail_rate"]
     for pnt in pts:
         pnt["fail_rate"], pnt["throughput"], pnt["instability"] = _r(pnt["fail_rate"]), _r(pnt["throughput"], 1), _r(pnt["instability"])
+    if len(pts) > 1500:  # chart payload cap: every Pareto point + an even sample of dominated ones
+        dominated = [x for x in pts if not x["pareto"]]
+        step = max(1, len(dominated) // 1400)
+        pts = [x for x in pts if x["pareto"]] + dominated[::step]
 
     tmax = prof["throughput"].max() or 1
     top = (prof.with_columns(((pl.col("throughput") / tmax) * (1 - pl.col("fail_rate")) ** 2 * (1 - 0.3 * pl.col("instability"))).alias("score"))
@@ -157,18 +162,29 @@ def discovery() -> dict:
 def optimal_pairs() -> dict:
     def build():
         df = store.df
-        min_support = max(15, min(60, len(df) // 170))
+        min_support = MIN_PAIR_SAMPLES or max(15, min(60, len(df) // 170))
+        k_all, n_all = int(df["failed"].sum()), len(df)
         key = [p["name"] for p in store.meta["key_params"]]
+        marg = {c: dict(df.group_by(c).agg(pl.col("failed").mean().alias("fr")).select(c, "fr").iter_rows()) for c in key}
         base = float(df["failed"].mean())
         tmax = float(df.filter(pl.col("failed") == 0)["throughput_mbps"].quantile(0.95) or 0) or 1.0
         cells = []
         for a, bcol in combinations(key, 2):
             g = df.group_by([a, bcol]).agg(pl.len().alias("n"), pl.col("failed").mean().alias("fr"),
                                            pl.col("throughput_mbps").filter(pl.col("failed") == 0).mean().alias("tp"))
+            tested = len(g)
             for r in g.filter(pl.col("n") >= min_support).iter_rows(named=True):
+                k = int(round(r["fr"] * r["n"]))
+                z, pv = stats.two_prop_z(k, r["n"], k_all - k, n_all - r["n"])
+                m = max(marg[a].get(r[a], 0) or 0, marg[bcol].get(r[bcol], 0) or 0)
                 cells.append({"pair": f"{a} × {bcol}", "a": a, "a_val": r[a], "b": bcol, "b_val": r[bcol], "runs": r["n"],
                               "fail_rate": _r(r["fr"]), "throughput": _r(r["tp"] or 0, 1), "lift": _r(r["fr"] / base if base else 0, 2),
-                              "score": (r["tp"] or 0) / tmax * (1 - r["fr"]) ** 2})
+                              "score": (r["tp"] or 0) / tmax * (1 - r["fr"]) ** 2,
+                              "failures": k, "odds_ratio": _r(stats.odds_ratio(k, r["n"], k_all - k, n_all - r["n"]), 3),
+                              "z_score": _r(z, 2), "p_value": float(f"{pv:.3g}"),
+                              "interaction_lift": _r(r["fr"] / m if m else 0, 3),
+                              "ci95": [_r(x) for x in stats.wilson(k, r["n"])],
+                              "evidence_strength": stats.evidence_strength(pv, r["n"], min_support, tested * 66, SIGNIFICANCE_ALPHA)})
         best = sorted(cells, key=lambda c: -c["score"])[:10]
         worst = sorted(cells, key=lambda c: -c["fail_rate"])[:10]
         for c in best + worst:
@@ -202,6 +218,7 @@ def _seed_stats() -> pl.DataFrame:
         z = (g["observed"] - g["expected"]) / var
         return g.with_columns(pl.Series("z", z), (pl.col("observed") / pl.col("expected")).alias("lift")) \
                 .with_columns((-(pl.col("z").clip(0, None)) / 3).exp().alias("repeatability")).sort("z", descending=True)
+
     return store.cached("seeds", build)
 
 
@@ -227,7 +244,7 @@ def randomization() -> dict:
             curves[c] = [{"x": _r(r["x"], 3), "fail_rate": _r(r["fr"])} for r in binned.iter_rows(named=True)]
         score = 0.45 * spread / 0.5 + 0.35 * rf[c] / rf_max + 0.2 * b.mutual_info[c] / mi_max
         sens.append({"variable": c, "fail_rate_spread": _r(spread), "rf_importance": _r(rf[c]), "mutual_info": _r(b.mutual_info[c]),
-                     "impact_score": _r(score), "threshold": THRESHOLDS.get(c)})
+                     "impact_score": _r(score), "threshold": (evidence.threshold_for(c) or {}).get("threshold")})
     sens.sort(key=lambda r: -r["impact_score"])
     top_curve_vars = [s["variable"] for s in sens if s["variable"] in curves][:4]
 
@@ -246,32 +263,72 @@ def randomization() -> dict:
         heatmaps[pv] = {"rows": [str(s) for s in top_seeds], "cols": labels,
                         "cells": [{"row": str(r["seed"]), "col": r["band"], "fail_rate": _r(r["fr"]), "runs": r["n"]} for r in d.iter_rows(named=True)]}
 
-    seed_pts = [{"seed": str(r["seed"]), "runs": r["runs"], "observed": _r(r["observed"]), "expected": _r(r["expected"]),
-                 "z": _r(r["z"], 2), "lift": _r(r["lift"], 2), "repeatability": _r(r["repeatability"]),
-                 "flag": bool(r["z"] > 3)} for r in seeds.iter_rows(named=True) if r["z"] is not None and np.isfinite(r["z"])]
+    seed_pts = seed_points(seeds)
     return {"sensitivity": sens, "curves": {c: curves[c] for c in top_curve_vars}, "heatmaps": heatmaps,
-            "seeds": seed_pts, "has_seed": _has_seed(), "determinism": determinism()}
+            "seeds": seed_pts, "has_seed": _has_seed(), "determinism": _determinism_payload(),
+            "seed_policy": {"min_runs": MIN_SEED_RUNS, "alpha": SIGNIFICANCE_ALPHA, "correction": "Bonferroni over scored seeds",
+                            "insufficient_seeds": sum(1 for x in seed_pts if not x["sufficient_samples"])}}
+
+
+def _determinism_payload(max_profiles: int = 500) -> dict:
+    """determinism() with the per-profile list capped for page payloads (full list: /api/insights/determinism)."""
+    d = determinism()
+    profs = sorted(d["profiles"], key=lambda r: (r["class"] != "deterministic", -r["runs"]))
+    return {**d, "profiles": profs[:max_profiles], "profiles_total": len(profs)}
+
+
+def seed_points(seeds: pl.DataFrame | None = None) -> list[dict]:
+    """Seed scores with 95% Wilson CIs and Bonferroni-corrected significance. A seed is only
+    flagged as anomalous with >= MIN_SEED_RUNS runs and a significant excess over expectation."""
+    seeds = _seed_stats() if seeds is None else seeds
+    rows = [r for r in seeds.iter_rows(named=True) if r["z"] is not None and np.isfinite(r["z"])]
+    tested = sum(1 for r in rows if r["runs"] >= MIN_SEED_RUNS) or 1
+    out = []
+    for r in rows:
+        k = int(round(r["observed"] * r["runs"]))
+        p = stats.two_sided_p(r["z"])
+        enough = r["runs"] >= MIN_SEED_RUNS
+        significant = enough and p * tested < SIGNIFICANCE_ALPHA
+        lo, hi = stats.wilson(k, r["runs"])
+        out.append({"seed": str(r["seed"]), "runs": r["runs"], "observed": _r(r["observed"]), "expected": _r(r["expected"]),
+                    "z": _r(r["z"], 2), "lift": _r(r["lift"], 2), "repeatability": _r(r["repeatability"]),
+                    "flag": bool(significant and r["z"] > 0), "failures": k, "ci95": [_r(lo), _r(hi)],
+                    "p_value": float(f"{p:.3g}"), "significant": bool(significant), "sufficient_samples": enough})
+    return out
 
 
 def determinism() -> dict:
     def build():
         prof = _profile_stats()
+        enough = (pl.col("runs") >= MIN_PROFILE_REPEATS) & (pl.col("distinct_seeds") >= min(MIN_PROFILE_SEEDS, 1 if not _has_seed() else MIN_PROFILE_SEEDS))
         cls = prof.with_columns(
             (2 * pl.col("fail_rate") - 1).abs().alias("repeatability"),
-            pl.when(pl.col("fail_rate") >= DETERMINISTIC_FAIL_RATE).then(pl.lit("deterministic"))
+            pl.when(~enough).then(pl.lit("insufficient"))
+              .when(pl.col("fail_rate") >= DETERMINISTIC_FAIL_RATE).then(pl.lit("deterministic"))
               .when(pl.col("fail_rate") >= 0.08).then(pl.lit("stochastic")).otherwise(pl.lit("stable")).alias("class"))
         cls_map = dict(zip(cls["config_id"].to_list(), cls["class"].to_list()))
         fails = store.df.filter(pl.col("failed") == 1).with_columns(
-            pl.col("config_id").replace_strict(cls_map, default="stochastic").alias("class"))
+            pl.col("config_id").replace_strict(cls_map, default="insufficient").alias("class"))
         by_sig = fails.group_by("error_signature").agg(
             (pl.col("class") == "deterministic").sum().alias("deterministic"),
-            (pl.col("class") != "deterministic").sum().alias("stochastic")).sort("error_signature")
+            (pl.col("class").is_in(["stochastic", "stable"])).sum().alias("stochastic"),
+            (pl.col("class") == "insufficient").sum().alias("insufficient")).sort("error_signature")
+        by_sig = by_sig.with_columns(
+            (pl.col("deterministic") / (pl.col("deterministic") + pl.col("stochastic")).clip(1, None)).alias("deterministic_share"))
+        by_sig = by_sig.with_columns(
+            pl.when(pl.col("deterministic") + pl.col("stochastic") < MIN_PROFILE_REPEATS).then(pl.lit("insufficient data"))
+              .when(pl.col("deterministic_share") >= 0.7).then(pl.lit("deterministic"))
+              .when(pl.col("deterministic_share") <= 0.3).then(pl.lit("stochastic")).otherwise(pl.lit("mixed")).alias("tendency"))
         counts = fails["class"].value_counts().to_dicts()
         profiles = [{"config_id": r["config_id"], "fail_rate": _r(r["fail_rate"]), "repeatability": _r(r["repeatability"]),
-                     "instability": _r(r["instability"]), "runs": r["runs"], "distinct_seeds": r["distinct_seeds"], "class": r["class"]}
+                     "instability": _r(r["instability"]), "runs": r["runs"], "distinct_seeds": r["distinct_seeds"], "class": r["class"],
+                     "failures": int(round(r["fail_rate"] * r["runs"])),
+                     "ci95": [_r(x) for x in stats.wilson(int(round(r["fail_rate"] * r["runs"])), r["runs"])]}
                     for r in cls.iter_rows(named=True)]
-        return {"failure_classes": counts, "by_signature": by_sig.to_dicts(), "profiles": profiles,
-                "profile_classes": cls["class"].value_counts().to_dicts(), "clusters": failure_clusters()}
+        return {"failure_classes": counts, "by_signature": [{k: (_r(v) if isinstance(v, float) else v) for k, v in r.items()} for r in by_sig.to_dicts()],
+                "profiles": profiles, "profile_classes": cls["class"].value_counts().to_dicts(), "clusters": failure_clusters(),
+                "policy": {"min_repeats": MIN_PROFILE_REPEATS, "min_distinct_seeds": MIN_PROFILE_SEEDS, "deterministic_fail_rate": DETERMINISTIC_FAIL_RATE,
+                           "stable_below": 0.08, "note": "Profiles with too few repeats/seeds are 'insufficient', never labelled deterministic."}}
     return store.cached("determinism", build)
 
 
@@ -318,9 +375,9 @@ def failure_clusters(k: int = 6) -> dict:
 def drift() -> dict:
     cont = _continuous_random()
     preferred = [v for v in ("temperature_c", "traffic_intensity", "timing_jitter_us") if v in cont]
-    if not preferred:  # uploaded data: the three most impactful continuous randomized variables
-        imp = store.bundle.importance_full
-        preferred = sorted(cont, key=lambda c: -imp.get(c, 0))[:3]
+    learned = {t["variable"]: t for t in evidence.environment_thresholds(None)}
+    if not preferred:  # uploaded data: the three variables with the strongest learned thresholds
+        preferred = [t for t in learned if t in cont][:3] or sorted(cont, key=lambda c: -store.bundle.importance_full.get(c, 0))[:3]
     sel = "".join(f'avg("{v}") AS "{v}", quantile_cont("{v}", 0.95) AS "{v}__p95", ' for v in preferred)
     daily = store.sql(f"""
         SELECT strftime(date_trunc('day', timestamp), '%Y-%m-%d') AS day, count(*) AS runs,
@@ -329,12 +386,20 @@ def drift() -> dict:
     series = [{k: (_r(v, 3) if isinstance(v, float) else v) for k, v in d.items()} for d in daily]
     variables, crossings = [], []
     for v in preferred:
+        thr = learned.get(v)
         means = [x[v] for x in series if x[v] is not None]
-        limit = DRIFT_LIMITS.get(v) or (_r(float(np.quantile(means, 0.8)), 3) if means else 0.0)
-        above = [x["day"] for x in series if x[v] is not None and x[v] > limit]
+        if thr:
+            limit, src, direction = thr["threshold"], "learned", thr["direction"]
+        else:  # no significant failure threshold: show the 80th percentile of daily means as a neutral reference line
+            limit, src, direction = (_r(float(np.quantile(means, 0.8)), 3) if means else 0.0), "reference (80th pct of daily mean; no significant risk threshold)", "above"
+        key = f"{v}__p95" if direction == "above" else v
+        beyond = (lambda x: x > limit) if direction == "above" else (lambda x: x <= limit)
+        above = [x["day"] for x in series if x.get(key) is not None and beyond(x[key])]
         unit = {"temperature_c": "°C", "timing_jitter_us": "µs"}.get(v, "")
-        variables.append({"key": v, "p95_key": f"{v}__p95", "label": v.replace("_", " "), "unit": unit, "limit": limit})
-        crossings.append({"variable": v, "threshold": limit, "first_crossing": above[0] if above else None, "days_above": len(above)})
+        variables.append({"key": v, "p95_key": f"{v}__p95", "label": v.replace("_", " "), "unit": unit, "limit": limit,
+                          "limit_source": src, "direction": direction, "evidence": thr})
+        crossings.append({"variable": v, "threshold": limit, "first_crossing": above[0] if above else None, "days_above": len(above),
+                          "limit_source": src, **evidence.time_drift(store.df, v, thr)})
     temp = "avg(temperature_c)" if "temperature_c" in store.df.columns else "NULL"
     topo = store.sql(f"""
         SELECT hardware, environment, count(*) AS runs, avg(failed) AS fail_rate, {temp} AS temp,
@@ -371,8 +436,12 @@ def _conditions(df: pl.DataFrame) -> list[tuple[str, pl.Series]]:
             q_lo, q_hi = col.quantile(0.2), col.quantile(0.8)
             conds += [(f"{p['name']} >= {q_hi:g}", col >= q_hi), (f"{p['name']} <= {q_lo:g}", col <= q_lo)]
     for v in _continuous_random():
-        limit = THRESHOLDS.get(v) or float(df[v].quantile(0.9))
-        conds.append((f"{v} > {limit:g}", df[v] > limit))
+        thr = evidence.threshold_for(v)
+        if thr:
+            conds.append((thr["condition"], df[v] > thr["threshold"] if thr["direction"] == "above" else df[v] <= thr["threshold"]))
+        else:
+            limit = float(df[v].quantile(0.9))
+            conds.append((f"{v} > {limit:g}", df[v] > limit))
     if "io_scheduler" in df.columns and "timing_jitter_us" in df.columns:
         conds.append(("io_scheduler = none & jitter > 15", (df["io_scheduler"] == "none") & (df["timing_jitter_us"] > 15)))
     flagged = [x["seed"] for x in randomization_seeds_flagged()]
@@ -387,6 +456,40 @@ def _conditions(df: pl.DataFrame) -> list[tuple[str, pl.Series]]:
 def randomization_seeds_flagged() -> list[dict]:
     s = _seed_stats().filter(pl.col("z") > 3)
     return s.to_dicts()
+
+
+def _associated_seeds(df: pl.DataFrame, sub: pl.DataFrame, top: int = 3) -> list[dict]:
+    """Seeds over-represented in one signature's failures (binomial z vs the seed's share of all runs)."""
+    n_sig, n_all = len(sub), len(df)
+    if n_sig < 10:
+        return []
+    share = df.group_by("seed").agg(pl.len().alias("n"))
+    inside = sub.group_by("seed").agg(pl.len().alias("k"))
+    j = inside.join(share, on="seed")
+    out = []
+    for r in j.iter_rows(named=True):
+        if r["k"] < 5:
+            continue
+        expected = r["n"] / n_all
+        z, p = stats.binom_z(r["k"], n_sig, expected)
+        if z > 3:
+            out.append({"seed": str(r["seed"]), "failures_with_signature": r["k"], "share_of_signature": _r(r["k"] / n_sig),
+                        "expected_share": _r(expected), "lift": _r((r["k"] / n_sig) / expected, 2), "z_score": _r(z, 2)})
+    return sorted(out, key=lambda x: -x["z_score"])[:top]
+
+
+def _associated_environment(df: pl.DataFrame, sub: pl.DataFrame, top: int = 3) -> list[dict]:
+    """Randomized variables whose distribution in this signature's failures differs most from passing runs (Cohen's d)."""
+    passes = df.filter(pl.col("failed") == 0)
+    if len(sub) < 10 or len(passes) < 10:
+        return []
+    out = []
+    for v in _continuous_random():
+        a, b = sub[v].cast(pl.Float64).to_numpy(), passes[v].cast(pl.Float64).to_numpy()
+        d = stats.cohens_d(a, b)
+        if abs(d) >= 0.2:
+            out.append({"variable": v, "mean_in_signature": _r(a.mean(), 3), "mean_in_passing_runs": _r(b.mean(), 3), "cohens_d": _r(d, 2)})
+    return sorted(out, key=lambda x: -abs(x["cohens_d"]))[:top]
 
 
 def root_cause() -> dict:
@@ -414,6 +517,8 @@ def root_cause() -> dict:
                         tmpl[key] = tmpl.get(key, 0) + 1
             d = det.get(sig, {"deterministic": 0, "stochastic": 0})
             sub = fails.filter(pl.col("error_signature") == sig)
+            assoc_seeds = _associated_seeds(df, sub) if _has_seed() else []
+            assoc_env = _associated_environment(df, sub)
             cards.append({
                 "signature": sig, "description": SIGNATURES.get(sig) or f"Failure signature observed in {n} runs", "count": n, "share": _r(n / len(fails)),
                 "deterministic_share": _r(d["deterministic"] / max(1, d["deterministic"] + d["stochastic"])),
@@ -421,6 +526,8 @@ def root_cause() -> dict:
                 "hardware": sub["hardware"].value_counts(sort=True).head(3).to_dicts(),
                 "avg_latency": _r(sub["latency_p99_ms"].mean(), 2),
                 "fingerprint": f"FP-{abs(hash(sig + str(lifts[:2]))) % 0xFFFFFF:06X}",
+                "tendency": d.get("tendency", "insufficient data"), "associated_seeds": assoc_seeds,
+                "associated_environment": assoc_env,
             })
         # global log anomaly template clusters
         tmpl_all: dict[str, dict] = {}

@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
 import { Award, FlaskConical, Gauge, Upload, Wand2 } from "lucide-react";
 import { post, useMeta, type Meta, type ShapItem } from "@/lib/api";
@@ -241,6 +242,7 @@ function Recommender({ meta, context, onLoad }: { meta: Meta; context: Cfg; onLo
                   </div>
                 ))}
               </div>
+              <RecommendationEvidence best={best} />
               <div className="mt-3 flex items-center justify-between">
                 <SourceBadge source={r.source} />
                 <Button variant="outline" size="sm" onClick={() => onLoad(best.config)}>
@@ -284,5 +286,44 @@ function Recommender({ meta, context, onLoad }: { meta: Meta; context: Cfg; onLo
         )}
       </CardContent>
     </Card>
+  );
+}
+
+
+function RecommendationEvidence({ best }: { best: any }) {
+  const sup = best.support;
+  return (
+    <div className="mt-3 space-y-2 rounded-lg border border-slate-200 p-3 text-xs">
+      <div className="flex flex-wrap items-center gap-1.5">
+        {sup &&
+          (best.extrapolation ? (
+            <Badge className="border-amber-200 bg-amber-50 text-amber-800">Extrapolation: {sup.nearest_observed_distance} of {sup.key_parameters_compared} key settings differ from any tested config</Badge>
+          ) : sup.exact_matching_runs > 0 ? (
+            <Badge className="border-emerald-200 bg-emerald-50 text-emerald-800">Supported: {num(sup.exact_matching_runs)} identical runs in training data</Badge>
+          ) : (
+            <Badge className="border-sky-200 bg-sky-50 text-sky-800">Near observed data ({sup.nearest_observed_distance} setting(s) differ)</Badge>
+          ))}
+        {best.pareto_optimal && <Badge>Pareto-optimal among candidates</Badge>}
+        {best.uncertainty && <Badge>Model disagreement ±{pct(best.uncertainty.model_disagreement / 2)}</Badge>}
+        <Link href="/insights" className="ml-auto text-sky-700 hover:underline">Model validation</Link>
+      </div>
+      {sup && (
+        <p className="text-slate-600">
+          Nearest tested configuration: {num(sup.nearest_observed_runs)} runs, observed failure rate {pct(sup.nearest_observed_failure_rate)}.
+        </p>
+      )}
+      {best.why?.length > 0 && (
+        <div>
+          <div className="font-semibold text-slate-700">Why this configuration</div>
+          <ul className="list-disc pl-4 text-slate-600">{best.why.map((w: string) => <li key={w}>{w}</li>)}</ul>
+        </div>
+      )}
+      {best.tradeoffs?.length > 0 && (
+        <div>
+          <div className="font-semibold text-slate-700">Trade-offs</div>
+          <ul className="list-disc pl-4 text-slate-600">{best.tradeoffs.map((t: string) => <li key={t}>{t}</li>)}</ul>
+        </div>
+      )}
+    </div>
   );
 }

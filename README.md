@@ -2,35 +2,55 @@
 
 **AI-Powered Silicon Validation & Configuration Intelligence Platform** (SanDisk Hackathon)
 
-This app ingests large, high-dimensional storage test campaigns and answers the eight core hackathon questions. The default dataset has 10,000+ executions, 100+ configuration parameters, 50+ randomized variables, telemetry, log traces and pass/fail outcomes. The analysis runs on ML models, DuckDB/Polars OLAP queries and a Gemini GenAI layer. The GenAI layer falls back to local heuristics when Gemini is unavailable.
+SilicoPulse ingests large, high-dimensional storage test campaigns and answers the eight core hackathon questions. A campaign can have 100,000+ executions, 100+ configuration parameters, 50+ randomized variables, telemetry, log traces and pass/fail outcomes.
+
+Every statistic is computed in Python: DuckDB/Polars aggregations, scikit-learn and LightGBM models, and statistical tests. Gemini only interprets and explains that **evidence**; it never produces the numbers.
 
 ```
 frontend/  Next.js 14 · React 18 · TypeScript · Tailwind · shadcn-style UI · Recharts + Chart.js · Zustand · TanStack Query
-backend/   FastAPI · DuckDB · Polars · scikit-learn · LightGBM · Google Gemini (raw HTTP)
+backend/   FastAPI · DuckDB · Polars · scikit-learn · LightGBM · SciPy · Google Gemini (raw HTTP, function calling)
+docs/      architecture.md: layers, data flow, evidence pipeline, Copilot pipeline
 ```
+
+See **[docs/architecture.md](docs/architecture.md)** for the full architecture.
 
 ## Quick start (Windows)
 
 ```powershell
-# 1. Backend (first run creates the venv; generates a 10k-run dataset + trains models on startup in ~5 s)
+# 1. Backend: generates a 10k-run benchmark and trains the models on first start (~10 s)
 cd backend
 python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
+copy NUL .env            # then add: GEMINI_API_KEY=<your key>   (optional: the app runs without AI)
 .venv\Scripts\uvicorn app.main:app --port 8000
 
 # 2. Frontend (new terminal)
 cd frontend
 npm install
-npm run dev          # http://localhost:3000
+npm run dev              # http://localhost:3000
 ```
 
 You can also run `start.ps1` from the repo root to launch both. API docs are at http://localhost:8000/docs.
 
-Set `NEXT_PUBLIC_API_URL` (see `frontend/.env.local.example`) if the API is not on `localhost:8000`.
+## Environment variables
+
+| Variable | Where | Default | Purpose |
+|---|---|---|---|
+| `GEMINI_API_KEY` | backend (`backend/.env` locally, Railway variables in production) | – | Gemini key. **Never commit it.** |
+| `JWT_SECRET` | backend | random value persisted in `data/.jwt_secret` | HS256 signing secret. Set it in production so sessions survive redeploys. |
+| `CORS_ORIGINS` | backend | `*` | Comma-separated allowed origins. In production, set it to the frontend URL(s). |
+| `SILICOPULSE_DEFAULT_RUNS` | backend | `10000` | Size of the generated benchmark (tested up to 100,000). |
+| `SILICOPULSE_DATA_DIR` | backend | `backend/data` | Data folder (the tests point it at a temp dir). |
+| `MIN_PAIR_SAMPLES` | backend | `0` (auto: 15–60, scales with data size) | Minimum runs before a parameter combination can be called toxic. |
+| `MIN_GROUP_SAMPLES` | backend | `30` | Minimum runs per parameter value or threshold group. |
+| `MIN_SEED_RUNS` | backend | `20` | Minimum runs before a seed can be scored or flagged. |
+| `MIN_PROFILE_REPEATS` / `MIN_PROFILE_SEEDS` | backend | `5` / `3` | Repeats and distinct seeds needed before a config can be called deterministic. |
+| `SIGNIFICANCE_ALPHA` | backend | `0.01` | Significance level, applied with Bonferroni correction. |
+| `NEXT_PUBLIC_API_URL` | frontend (build time) | `http://localhost:8000` | Backend URL. |
 
 ## Login & roles
 
-Opening http://localhost:3000 redirects to `/login`. The login page has one-click demo buttons for three roles:
+Opening http://localhost:3000 redirects to `/login`, which has one-click demo buttons for three roles. These are **demo credentials** for the hackathon prototype:
 
 | Role | Email / password | Permissions |
 |---|---|---|
@@ -38,93 +58,145 @@ Opening http://localhost:3000 redirects to `/login`. The login page has one-clic
 | VLSI Engineer | `engineer@sandisk.com` / `eng123` | read, upload CSV, generate datasets |
 | Executive Viewer | `executive@sandisk.com` / `exec123` | read-only |
 
-How auth works:
+- **Backend (`backend/app/auth.py`):** passwords are stored as bcrypt hashes, and sessions are HS256 JWTs that last 8 hours. Every `/api/*` route except `/api/health` and `/api/login` needs a bearer token. Upload and generate routes return 403 for the Executive Viewer.
+- **Frontend:** `src/context/AuthContext.tsx` keeps the token in localStorage and checks it with `/api/me` on load.
 
-- **Backend (`backend/app/auth.py`):**
-  - Passwords are stored as bcrypt hashes.
-  - Sessions are HS256 JWTs that last 8 hours.
-  - Every `/api/*` route except `/api/health` and `/api/login` needs a bearer token.
-  - Upload and generate routes check permissions and return 403 for the Executive Viewer.
-  - The signing secret comes from the `JWT_SECRET` environment variable. If that isn't set, a random secret is saved in `backend/data/.jwt_secret`.
-- **Frontend:** `src/context/AuthContext.tsx` keeps the token in localStorage and checks it with `/api/me` on load. An expired session sends the user back to `/login`.
+## Evidence layer (trust)
+
+The **Evidence & Guardrails** page (`/insights`) and the Copilot both read from one evidence engine (`app/evidence.py`, `app/insights.py`, `app/stats.py`). Every finding has a sample size, a failure rate vs the baseline, a lift, a 95% Wilson CI, a p-value and z-score (Bonferroni-corrected), and an evidence-strength label. Findings use **associational language**: no causal method is implemented, so nothing claims causation.
+
+| Analysis | What it computes |
+|---|---|
+| High-risk parameters | Importance, correlation, χ² p-value, Cramér's V, and the riskiest and safest value with failure rate, lift and n |
+| Toxic combinations | Runs, failures, failure rate, baseline, lift, odds ratio, interaction lift (vs the stronger single setting) and p-value, with a configurable minimum support |
+| Environmental thresholds | A risk threshold **learned** per variable (the percentile cut with the best two-proportion z), plus how the share of runs beyond it changed from early to late in the campaign. Nothing like "60 °C" is assumed in advance. |
+| Failure signatures | Hierarchy: signature → associated parameters → environment (Cohen's d) → seeds → hardware → log patterns → supporting runs; deterministic, stochastic or mixed tendency |
+| Determinism | Per-profile repeatability with minimum repeats and seeds; anything below that threshold is labelled **insufficient** |
+| Anomalous seeds | Observed vs model-expected failure rate, z-score, p-value and 95% CI; flagged only with ≥ `MIN_SEED_RUNS` runs and a Bonferroni-significant result |
+| Hardware | Failure rate with CI, significance vs the other tiers, matched-configuration comparison, cross-tier patterns, dominant signatures, sensitivity |
+| Guardrails | Risky conditions **discovered from data** (pairs, values, thresholds), each with failure rate, baseline, lift, n, significance, severity and a safer observed alternative |
+| Data quality | Totals, missing values (measured at upload), duplicates, invalid values, log and timestamp coverage, and **real vs derived** fields with explicit warnings (e.g. "Seed analysis unavailable: random seed field not present.") |
+| Model validation | 80/20 hold-out + 5-fold stratified CV: ROC-AUC, PR-AUC, precision, recall, F1, confusion matrix, calibration curve, Brier score, class balance, global SHAP |
+
+New endpoints, all **additive**: existing response formats are unchanged and only gain optional fields.
+
+- `GET /api/insights`, filterable with `?hardware=…&environment=…&workload=…&date_from=…&date_to=…&signature=…&config_id=…&seed=…`
+- `GET /api/insights/{parameters|pairs|environment|signatures|hardware|guardrails|seeds|determinism}`
+- `GET /api/data-quality` and `GET /api/model/validation`
 
 ## CSV upload (`/upload` tab)
 
-1. Drag and drop a CSV, or click the dropzone. `POST /api/upload-csv/preview` stores the file and auto-detects each column's role: outcome, performance metric, seed, timestamp, error signature, log text, run/config ID, context, config parameter, randomized variable or telemetry.
-2. A mapping dialog opens. You pick the **Outcome** column and which of its values mean FAIL, plus the **Performance metric**. You can also map the optional fields and override any column's role.
-3. `POST /api/upload-csv` maps the CSV onto the platform's internal columns, re-points DuckDB at it and retrains every model. All Q1–Q8 views and the Copilot then use the uploaded data. Columns the CSV doesn't have get neutral defaults, and the dashboard shows "–" for them.
-4. The header badge shows **Using Uploaded CSV** or **Using Benchmark Data**. **Revert to benchmark data** calls `POST /api/dataset/reset`. The uploaded dataset is saved to disk and survives an API restart.
+1. Drag and drop a CSV. `POST /api/upload-csv/preview` stores it and auto-detects each column's role.
+2. The mapping dialog asks for the **Outcome** column (and which values mean FAIL) and the **Performance metric**. You can override any column's role.
+3. `POST /api/upload-csv` canonicalizes the data, records missing values and log coverage, re-points DuckDB, retrains every model and pre-computes the analytics. Any column that perfectly predicts pass/fail (a leaked label) is dropped automatically and reported.
+4. The header badge shows **Using Uploaded CSV** or **Using Benchmark Data**. **Revert to benchmark data** calls `POST /api/dataset/reset`.
 
-The **📥 Download Sample SanDisk Execution CSV** button calls `GET /api/download-sample-csv`. It returns a 1,000-row execution log you can upload straight back to test the pipeline.
+**📥 Download Sample SanDisk Execution CSV** (`GET /api/download-sample-csv`) returns a 1,000-row log to test the pipeline. An upload needs ≥ 50 rows and ≥ 10 passing and 10 failing runs, and can be up to 200 MB.
 
-Uploads must have at least 50 rows, at least 10 passing and 10 failing runs, and be no larger than 200 MB. A rejected upload never replaces the active dataset.
+## AI Copilot (evidence-grounded)
 
-## AI Copilot (fully AI-driven)
+`/copilot` is a Gemini function-calling agent (`app/copilot_agent.py`, `POST /api/copilot/chat`, which streams Server-Sent Events). For each question:
 
-`/copilot` is a chatbot driven by a Gemini agent that calls tools (`backend/app/copilot_agent.py`, endpoint `POST /api/copilot/chat`, which streams Server-Sent Events).
-
-- **Reads the whole conversation.** Gemini gets the chat history, so follow-up questions work. It decides on its own how to respond.
-- **Fetches real data with tools.** It can call 16 tools over the live dataset:
-  - overview and KPIs
-  - feature importance, Pareto configs and parameter pairs
-  - randomization and seed analysis, determinism
-  - root causes, config profile and compare, run diff, list runs
-  - predict and recommend
-  - **read-only SQL** (`query_data`), which runs in a DuckDB sandbox with no file or network access
-  - two display tools: `render_chart` and `suggest_follow_ups`
-- **Starts from a snapshot.** A pre-computed analytics snapshot is in its instructions, so common questions take a single Gemini call.
-- **Streams the answer.** Text arrives token by token, along with live "analysis steps", the charts it chooses and clickable follow-up questions. There are Stop and Retry buttons, and the chat history persists.
-- **No canned answers.** If every model is out of quota, the chat shows an explicit error with a retry time instead.
+1. **Intent detection.** A keyword classifier routes the question: parameters, pairs, environment, seeds, determinism, signatures, hardware, recommendation, prediction or data quality.
+2. **Evidence retrieval.** The matching analytics are computed for the **active dashboard filters** and placed in the prompt. This is also shown to the user as evidence cards.
+3. **Generation.** Gemini answers from that evidence. It can call 26 tools for more, and the 10 evidence tools receive the dashboard filters automatically. It is told never to compute statistics itself, to give n and the baseline with every rate, to use associational language, and to follow the structure Executive Finding → Evidence → Top Factors → Failure Pattern → Affected Configurations → Evidence Strength → Recommended Action.
+4. **Grounding check.** Every figure in the answer is traced back to a number the analytics produced. The UI shows "Evidence check: N/M figures traced to computed analytics" and lists anything it couldn't trace.
 
 ## Gemini AI layer
 
-The key is hard-coded in `backend/app/config.py` (`GEMINI_API_KEY`). A `GEMINI_API_KEY` environment variable takes precedence over it. Free-tier quotas apply per model (about 20 requests per day each), so calls rotate through a pool of 7 Flash models (`GEMINI_MODELS` in `config.py`, logic in `app/gemini_pool.py`). A model that returns 429 is skipped until Google's `retryDelay` has passed. A model that returns 503 (overloaded) is skipped for 20 seconds. The executive summary and recommendation explanations fall back to local text when no model is available; the Copilot does not use local text.
+The key comes **only** from the environment: `backend/.env` locally (gitignored) or the Railway service variables in production. Free-tier quotas apply per model (about 20 requests per day each), so calls rotate through a pool of Flash models (`GEMINI_MODELS` in `config.py`, logic in `app/gemini_pool.py`):
 
-If a call fails, every AI feature switches to the local heuristic engine in `app/ai.py`, so the app never crashes. Failures that trigger this:
+- A model that returns 429 is skipped until Google's `retryDelay` has passed.
+- A model that returns 503 is skipped for 20 seconds.
 
-- The key is empty or still the placeholder.
-- The key is invalid or Google denies the project (HTTP 401/403). The app waits 5 minutes before retrying.
-- Gemini is rate-limited (HTTP 429). The app waits 60 seconds before retrying.
-- The network fails or the call times out.
+When no model is available:
 
-The UI shows a badge with the source of each answer: **Gemini** or **Local heuristic AI**.
-
-> ⚠️ The key is in source code. Don't push this repo publicly with the key inside. Move it to the env var before sharing.
+- The **Copilot** shows an explicit error with a retry time. It never gives a canned answer.
+- The **executive summary** and **recommendation explanations** fall back to local text, and their badge says so.
 
 ## How each hackathon question is answered
 
 | Q | Where | Method |
 |---|---|---|
-| Q1 Influence | Config Discovery | Random-Forest impurity importance + mutual information + point-biserial correlation |
-| Q2 Optimal pairs | Config Discovery | Pareto frontier (throughput ↑ vs failure rate ↓) per config profile; two-way pair mining (best & toxic); CSV/JSON export |
-| Q3 Randomization impact | Randomization Engine | Failure-rate swing across octiles + RF importance + MI; sensitivity curves; seed × perturbation heatmap |
-| Q4 Determinism | Randomization Engine | Profile repeatability across seeds (≥80% fail → deterministic); seed z-score vs config-only model expectation; K-Means failure clustering + PCA |
-| Q5 Root cause | Root Cause & Logs | Per-signature fingerprints: condition-lift mining, log template mining (numbers → `<*>`), anomaly clusters |
-| Q6 Diff & change impact | Root Cause & Logs | Run A vs Run B config/random/telemetry diff, SHAP-Δ change attribution, template-aligned log diff, auto-pair nearest passing run |
-| Q7 Prediction | Predict & Prescribe | Pre-execution LightGBM + Random Forest ensemble (config + context only), live sandbox, TreeSHAP breakdown |
-| Q8 Prescription | Predict & Prescribe | 4,000-candidate search maximizing throughput × (1−risk)³ under a risk ceiling + greedy flag refinement; confidence = model agreement + risk + AUC; NL explanation |
+| Q1 Influence | Config Discovery, Evidence | RF importance + mutual information + correlation; per-value χ², Cramér's V, lift, significance |
+| Q2 Optimal pairs | Config Discovery, Evidence | Pareto frontier per profile; toxic and best pairs with lift, odds ratio, interaction lift, Bonferroni p, min support |
+| Q3 Randomization impact | Randomization Engine, Evidence | Failure-rate swing + RF importance + MI; learned thresholds; seed × perturbation heatmap |
+| Q4 Determinism | Randomization Engine | Repeatability across seeds with minimum repeats and seeds; seed z-tests with CI; K-Means failure clusters |
+| Q5 Root cause | Root Cause & Logs, Evidence | Signature hierarchy: condition lift, environment shift (Cohen's d), associated seeds, hardware, log templates |
+| Q6 Diff & change impact | Root Cause & Logs | Run diff, SHAP-Δ attribution, template-aligned log diff |
+| Q7 Prediction | Predict & Prescribe, Evidence | LightGBM + RF ensemble on pre-execution features; hold-out + CV, calibration, confusion matrix |
+| Q8 Prescription | Predict & Prescribe | 4,000-candidate search with training-data **support** (nearest observed config, explicit **extrapolation** label), uncertainty, Pareto status, why and trade-offs |
 
-**Innovation features:**
+## Scale (100,000+ executions)
 
-- **AI Copilot.** Answers natural-language questions with an intent router and grounded facts. Gemini writes the Markdown; the reply also includes an inline chart and key-value chips.
-- **Drift visualizer.** Chart.js charts of each randomized variable's daily mean and p95 against its drift limit.
-- **2D hardware topology risk map.**
-- **One-click synthetic dataset generator.** Comes with presets and retrains every model automatically.
-- **Executive GenAI summary.**
-- **SHAP explainability bars.**
+Measured on a 100,000-run benchmark:
+
+- **Startup:** about 38 s to generate the data and train every model.
+- **Pre-computation:** heavy analytics are computed in the background after each dataset load, and are ready about 6 s later.
+- **Responses:** every endpoint answers in under 1.5 s, and filtered insights take under 1 s.
+- **Memory:** peaks at about 1.2 GB.
+
+What keeps it fast:
+
+- **Data shape:** vectorized Polars/DuckDB, with no row-by-row loops over the dataset.
+- **Caching:** results are cached per dataset and per filter, with per-key locks so concurrent requests don't recompute.
+- **Model training:** random forests use at most 40k bootstrap rows per tree, and cross-validation uses at most 30k rows.
+- **Payloads:** only summaries go to the browser; chart points and profile lists are capped.
+
+## Tests
+
+```powershell
+cd backend
+.venv\Scripts\pip install -r requirements-dev.txt
+.venv\Scripts\python -m pytest
+```
+
+The suite (42 tests) runs against an isolated temporary data folder with no network or Gemini calls. It covers:
+
+- auth and roles
+- backward compatibility of every existing endpoint
+- the evidence layer, with checks that its numbers match a recomputation from the raw data
+- learned thresholds, seed and determinism policies, guardrails and model validation
+- upload, mapping, missing values and the leakage guard
+- the Copilot pipeline (intents, evidence retrieval, filter injection, grounding check, quota handling) against a mock Gemini server
+
+The frontend is checked with `npx tsc --noEmit` and `npm run build`.
+
+## Deployment (Railway)
+
+The Railway project `silicopulse-backend` has two services, both deployed from this repo with the Railway CLI. The local folder is linked with `railway link`.
+
+| Service | Root | Start | Variables |
+|---|---|---|---|
+| `silicopulse-backend` | `backend/` | `Procfile`: `uvicorn app.main:app --host 0.0.0.0 --port $PORT` | `GEMINI_API_KEY`, `JWT_SECRET`, `CORS_ORIGINS` |
+| `silicopulse-frontend` | `frontend/` | `next build` / `next start` | `NEXT_PUBLIC_API_URL` = backend URL |
+
+```powershell
+cd backend;  railway up --service silicopulse-backend  --detach
+cd frontend; railway up --service silicopulse-frontend --detach
+```
+
+Health check: `GET /api/health`, which also reports whether the background pre-computation has finished.
+
+## Security notes
+
+- No secrets in source control: `.env` and `backend/data/` are gitignored, and `config.py` keeps `GEMINI_API_KEY = ""`.
+- Set `JWT_SECRET` and `CORS_ORIGINS` in production.
+- The Copilot's SQL tool runs read-only `SELECT` statements in a DuckDB connection with external access disabled (no file, network or extension access).
+- The demo credentials are for the hackathon only. Replace `_USERS` in `auth.py` with a real identity provider before any real use.
 
 ## Synthetic data
 
-`backend/app/generator.py` builds the dataset around a hidden ground-truth failure model with three kinds of drivers:
+`backend/app/generator.py` builds the benchmark around a hidden ground-truth failure model:
 
 - **Deterministic config interactions:**
   - `queue_depth≥128 & write_cache=0`
   - `gc_policy=aggressive & block_size≤8K`
   - `zstd & threads≥32`
 - **Stochastic drivers:**
-  - thermal drift
-  - timing jitter
+  - a thermal ramp above 60 °C
+  - timing jitter above 22 µs
   - 6 "unlucky" firmware seeds under load
 - **Weak effects:** low over-provisioning and ECC strength.
 
-The analytics recover these drivers without being told what they are. You can check the anomalous seeds against `hidden_unlucky_seeds` in `backend/data/meta.json`.
+The analytics recover these without being told about them. For example, the learned thresholds come out near 64 °C and 22.6 µs, and the flagged seeds are a subset of `hidden_unlucky_seeds` in `data/meta.json`. None of these values appear anywhere in the analytics code.

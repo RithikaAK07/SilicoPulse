@@ -124,15 +124,55 @@ export interface ShapItem {
 
 export const useMeta = () => useQuery<Meta>({ queryKey: ["meta"], queryFn: () => api("/api/meta") });
 
-export function useOverview() {
+/** Active dashboard filters in backend form ({hardware, environment, workload, date_from, date_to}), empty keys dropped. */
+export function useActiveFilters(): Record<string, string> {
   const f = useFilters();
-  const qs = new URLSearchParams(
-    Object.entries({ environment: f.environment, hardware: f.hardware, workload: f.workload, date_from: f.dateFrom, date_to: f.dateTo }).filter(
-      ([, v]) => !!v,
-    ) as [string, string][],
-  ).toString();
+  return Object.fromEntries(
+    Object.entries({ environment: f.environment, hardware: f.hardware, workload: f.workload, date_from: f.dateFrom, date_to: f.dateTo }).filter(([, v]) => !!v),
+  ) as Record<string, string>;
+}
+
+function useFilterQs() {
+  return new URLSearchParams(useActiveFilters()).toString();
+}
+
+export function useOverview() {
+  const qs = useFilterQs();
   return useQuery({ queryKey: ["overview", qs], queryFn: () => api(`/api/overview?${qs}`), placeholderData: (p) => p });
 }
+
+// ---- evidence layer (filter-aware)
+export interface Insight {
+  id: string;
+  title: string;
+  category: string;
+  severity: "low" | "medium" | "high" | "critical";
+  finding: string;
+  evidence: Record<string, any>;
+  evidence_strength?: string;
+  affected_parameters: string[];
+  failure_signatures: string[];
+  supporting_runs?: number;
+  recommendation?: string;
+  explanation?: string;
+}
+
+export function useInsights() {
+  const qs = useFilterQs();
+  return useQuery<{ insights: Insight[]; runs: number; baseline_failure_rate: number; filters: Record<string, string> }>({
+    queryKey: ["insights", qs],
+    queryFn: () => api(`/api/insights?${qs}`),
+    placeholderData: (p) => p,
+  });
+}
+
+export function useInsightSection<T = any>(section: string) {
+  const qs = useFilterQs();
+  return useQuery<T>({ queryKey: ["insights", section, qs], queryFn: () => api(`/api/insights/${section}?${qs}`), placeholderData: (p) => p });
+}
+
+export const useDataQuality = () => useQuery<any>({ queryKey: ["data-quality"], queryFn: () => api("/api/data-quality") });
+export const useModelValidation = () => useQuery<any>({ queryKey: ["model-validation"], queryFn: () => api("/api/model/validation") });
 
 export const useSummary = () => useQuery({ queryKey: ["summary"], queryFn: () => api("/api/summary"), enabled: false });
 export const useDiscovery = () => useQuery({ queryKey: ["discovery"], queryFn: () => api("/api/discovery") });

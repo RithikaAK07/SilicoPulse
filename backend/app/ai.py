@@ -293,7 +293,7 @@ def _predict(q: str) -> dict:
 
 
 def _recommend() -> dict:
-    recs = store.cached("recommend::default", lambda: ml.recommend(store.bundle, {}))
+    recs = store.cached("recommend::default", lambda: ml.recommend(store.bundle, {}, df=store.df))
     r = recs[0]
     md = ["## Recommended configuration for the next run",
           f"**Failure risk {_pct(r['failure_risk'])}** · **{r['expected_throughput']:,} MB/s** · confidence **{_pct(r['confidence'])}**", "",

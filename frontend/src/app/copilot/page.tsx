@@ -2,13 +2,15 @@
 import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, Bot, Check, ChevronDown, Loader2, RotateCcw, Send, Sparkles, Square, Trash2, User, Wrench } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { postStream } from "@/lib/api";
+import { postStream, useActiveFilters } from "@/lib/api";
 import { useChat, type ChatChart, type ChatMessage } from "@/lib/store";
 import { useAuth } from "@/context/AuthContext";
 import { INK, SERIES, cn } from "@/lib/utils";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ChartTooltip, Markdown, axisProps } from "@/components/common";
+import { FilterBar } from "@/components/filter-bar";
+import { EvidenceChips, SeverityBadge, StrengthBadge } from "@/components/evidence";
 
 const STARTERS = [
   "Give me a quick health check of this test campaign",
@@ -46,6 +48,7 @@ async function* sse(res: Response): AsyncGenerator<any> {
 export default function CopilotPage() {
   const { messages, push, mutate, remove, clear } = useChat();
   const { user } = useAuth();
+  const filters = useActiveFilters();
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
@@ -85,7 +88,7 @@ export default function CopilotPage() {
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     try {
-      const res = await postStream("/api/copilot/chat", { messages: convo.slice(-24) }, ctrl.signal);
+      const res = await postStream("/api/copilot/chat", { messages: convo.slice(-24), filters }, ctrl.signal);
       for await (const e of sse(res)) {
         switch (e.type) {
           case "status":
@@ -110,6 +113,15 @@ export default function CopilotPage() {
             break;
           case "suggestions":
             mutate(id, () => ({ suggestions: e.items }));
+            break;
+          case "intent":
+            mutate(id, () => ({ intents: e.intents, filters: e.filters }));
+            break;
+          case "evidence":
+            mutate(id, (m) => ({ evidence: [...(m.evidence ?? []), ...e.items].slice(0, 12) }));
+            break;
+          case "grounding":
+            mutate(id, () => ({ grounding: { figures: e.figures, matched: e.matched, unmatched: e.unmatched } }));
             break;
           case "error":
             mutate(id, () => ({ error: { message: e.message, retryAfter: e.retry_after } }));
@@ -160,6 +172,12 @@ export default function CopilotPage() {
           )}
         </div>
 
+        <div className="border-b border-slate-200 bg-white px-4 pt-3 sm:px-6">
+          <FilterBar compact />
+          <p className="-mt-1 pb-2 text-[11px] text-slate-500">
+            {Object.keys(filters).length ? `Answers analyse only: ${Object.entries(filters).map(([k, v]) => `${k}=${v}`).join(", ")}` : "Answers analyse the whole active dataset. Pick filters to focus the copilot."}
+          </p>
+        </div>
         <div className="flex-1 space-y-5 overflow-y-auto bg-slate-50/60 px-4 py-5 sm:px-6">
           {!messages.length && (
             <div className="mx-auto max-w-2xl py-8 text-center">
@@ -317,10 +335,27 @@ function AssistantBubble({ m, last, onSuggest, onRetry, busy }: { m: ChatMessage
           )}
         </div>
 
+        {m.evidence && m.evidence.length > 0 && <EvidencePanel items={m.evidence} />}
+
+        {!m.streaming && m.grounding && m.grounding.figures > 0 && (
+          <div
+            className={cn(
+              "mt-1.5 inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px]",
+              m.grounding.matched === m.grounding.figures ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800",
+            )}
+            title={m.grounding.unmatched.length ? `Not found in computed analytics: ${m.grounding.unmatched.join(", ")}` : "Every figure matches a value computed by the analytics layer"}
+          >
+            <Check className="h-3 w-3" /> Evidence check: {m.grounding.matched}/{m.grounding.figures} figures traced to computed analytics
+            {m.grounding.unmatched.length > 0 && <span className="text-amber-700"> · unverified: {m.grounding.unmatched.slice(0, 3).join(", ")}</span>}
+          </div>
+        )}
+
         {!m.streaming && m.source && !m.error && (
           <div className="mt-1 px-1 text-[10px] text-slate-400">
             {m.source}
             {steps.length ? ` · ${steps.length} tool call${steps.length > 1 ? "s" : ""}` : ""}
+            {m.intents?.length ? ` · intents: ${m.intents.join(", ")}` : ""}
+            {m.filters && Object.keys(m.filters).length ? ` · analysed: ${Object.entries(m.filters).map(([k, v]) => `${k}=${v}`).join(", ")}` : m.intents ? " · analysed: whole dataset" : ""}
           </div>
         )}
 
@@ -390,5 +425,33 @@ function ChatChartView({ chart }: { chart: ChatChart }) {
         </ResponsiveContainer>
       </div>
     </figure>
+  );
+}
+
+
+function EvidencePanel({ items }: { items: NonNullable<ChatMessage["evidence"]> }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mt-2 rounded-xl border border-slate-200 bg-white">
+      <button onClick={() => setOpen(!open)} className="flex w-full items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-600 hover:text-slate-900" aria-expanded={open}>
+        <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-180")} />
+        Evidence ({items.length}) · computed by the analytics layer, not the LLM
+      </button>
+      {open && (
+        <div className="grid gap-2 border-t border-slate-100 p-3 md:grid-cols-2">
+          {items.map((c, i) => (
+            <div key={i} className="rounded-lg border border-slate-100 bg-slate-50/60 p-2.5">
+              <div className="mb-1 flex flex-wrap items-center gap-1.5">
+                <SeverityBadge severity={c.severity} />
+                <StrengthBadge strength={c.evidence_strength} />
+              </div>
+              <div className="text-xs font-semibold text-slate-900">{c.title}</div>
+              <div className="mb-1.5 text-[11px] text-slate-600">{c.finding}</div>
+              <EvidenceChips evidence={c.evidence} keys={Object.keys(c.evidence)} />
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

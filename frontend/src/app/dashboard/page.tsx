@@ -1,13 +1,12 @@
 "use client";
-import { useMemo } from "react";
-import { Activity, AlertOctagon, CheckCircle2, Gauge, RotateCcw, Sparkles, Waves } from "lucide-react";
+import { Activity, AlertOctagon, CheckCircle2, Gauge, Sparkles, Waves } from "lucide-react";
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { useMeta, useOverview, useSummary } from "@/lib/api";
-import { useFilters } from "@/lib/store";
+import { useOverview, useSummary } from "@/lib/api";
 import { INK, SERIES, STATUS, STATUS_INK, num, pct } from "@/lib/utils";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Select } from "@/components/ui/select";
+import { FilterBar } from "@/components/filter-bar";
+import { DataQualityStrip, TopInsights } from "@/components/evidence";
 import { ChartTooltip, ErrorState, KpiCard, Loading, Markdown, PageHeader, SourceBadge, Spinner, axisProps } from "@/components/common";
 
 export default function DashboardPage() {
@@ -44,6 +43,7 @@ export default function DashboardPage() {
             <KpiCard label="High-Risk Configs" value={num(k.high_risk_configs)} sub="profiles failing > 30%" icon={AlertOctagon} accent={STATUS.critical} />
             <KpiCard label="Avg Instability Index" value={k.instability_index == null ? "–" : k.instability_index.toFixed(3)} sub={k.instability_index == null ? "not in dataset" : "0 = stable · 1 = chaotic"} icon={Waves} accent={SERIES[3]} />
           </div>
+          <DataQualityStrip />
 
           <Card className="mt-4 border-sky-200 bg-gradient-to-br from-white to-sky-50">
             <CardHeader>
@@ -73,6 +73,8 @@ export default function DashboardPage() {
               )}
             </CardContent>
           </Card>
+
+          <TopInsights />
 
           <div className="mt-4 grid gap-4 xl:grid-cols-2">
             <Card>
@@ -161,77 +163,5 @@ export default function DashboardPage() {
         </>
       )}
     </>
-  );
-}
-
-function FilterBar() {
-  const { data: meta } = useMeta();
-  const f = useFilters();
-  const days = useMemo(() => {
-    if (!meta) return [] as string[];
-    const out: string[] = [];
-    const d = new Date(meta.filters.date_min + "T00:00:00Z");
-    const end = new Date(meta.filters.date_max + "T00:00:00Z");
-    while (d <= end) {
-      out.push(d.toISOString().slice(0, 10));
-      d.setUTCDate(d.getUTCDate() + 1);
-    }
-    return out;
-  }, [meta]);
-  if (!meta) return null;
-  const fromIdx = f.dateFrom ? days.indexOf(f.dateFrom) : 0;
-  const toIdx = f.dateTo ? days.indexOf(f.dateTo) : days.length - 1;
-  return (
-    <Card className="mb-4 p-3">
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_2fr_auto] xl:items-end">
-        <Labeled label="Environment">
-          <Select value={f.environment} placeholder="All environments" options={meta.filters.environment} onValueChange={(v) => f.set({ environment: v })} />
-        </Labeled>
-        <Labeled label="Hardware">
-          <Select value={f.hardware} placeholder="All hardware" options={meta.filters.hardware} onValueChange={(v) => f.set({ hardware: v })} />
-        </Labeled>
-        <Labeled label="Workload pattern">
-          <Select value={f.workload} placeholder="All workloads" options={meta.filters.workload} onValueChange={(v) => f.set({ workload: v })} />
-        </Labeled>
-        <Labeled label={`Date range · ${days[fromIdx]} → ${days[toIdx]}`}>
-          <div className="grid grid-cols-2 gap-3 pt-2">
-            <input
-              type="range"
-              aria-label="Start date"
-              min={0}
-              max={days.length - 1}
-              value={fromIdx}
-              onChange={(e) => {
-                const i = Math.min(+e.target.value, toIdx);
-                f.set({ dateFrom: i === 0 ? "" : days[i] });
-              }}
-            />
-            <input
-              type="range"
-              aria-label="End date"
-              min={0}
-              max={days.length - 1}
-              value={toIdx}
-              onChange={(e) => {
-                const i = Math.max(+e.target.value, fromIdx);
-                f.set({ dateTo: i === days.length - 1 ? "" : days[i] });
-              }}
-            />
-          </div>
-        </Labeled>
-        <Button variant="ghost" size="sm" onClick={f.reset}>
-          <RotateCcw className="h-4 w-4" /> Reset
-        </Button>
-      </div>
-    </Card>
-  );
-}
-
-function Labeled({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="block">
-      <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-slate-500">{label}</span>
-      {children}
-    </label>
   );
 }

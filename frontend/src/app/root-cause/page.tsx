@@ -55,6 +55,7 @@ function FingerprintCard({ f }: { f: any }) {
           <Badge>{num(f.count)} failures · {pct(f.share)}</Badge>
           <Badge color={det ? SERIESDET : SERIESSTO}>{det ? `Deterministic ${pct(f.deterministic_share, 0)}` : `Stochastic ${pct(1 - f.deterministic_share, 0)}`}</Badge>
           <Badge className="font-mono">{f.fingerprint}</Badge>
+          {f.tendency && <Badge className="capitalize">tendency: {f.tendency}</Badge>}
         </div>
         <div>
           <div className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">Precursor conditions (lift)</div>
@@ -71,6 +72,23 @@ function FingerprintCard({ f }: { f: any }) {
             <span className="text-slate-500">No single dominant condition (diffuse cause)</span>
           )}
         </div>
+        {(f.associated_seeds?.length > 0 || f.associated_environment?.length > 0) && (
+          <div>
+            <div className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">Associated environment & randomization</div>
+            {f.associated_environment?.map((e: any) => (
+              <div key={e.variable} className="flex justify-between gap-2 py-0.5">
+                <code className="text-sky-700">{e.variable}</code>
+                <span className="tabular-nums text-slate-700">{e.mean_in_signature} vs {e.mean_in_passing_runs} <span className="text-slate-500">· d={e.cohens_d}</span></span>
+              </div>
+            ))}
+            {f.associated_seeds?.map((sd: any) => (
+              <div key={sd.seed} className="flex justify-between gap-2 py-0.5">
+                <code className="text-sky-700">seed {sd.seed}</code>
+                <span className="tabular-nums text-slate-700">{sd.lift}× <span className="text-slate-500">· z={sd.z_score}</span></span>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="mt-auto">
           <div className="mb-1 text-[10px] uppercase tracking-wide text-slate-500">Log signature</div>
           <div className="space-y-0.5 rounded-md bg-slate-50 p-2 font-mono text-[10px] leading-relaxed">

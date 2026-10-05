@@ -1,13 +1,19 @@
-"""Central configuration for the SilicoPulse backend."""
+"""Central configuration for the SilicoPulse backend (all secrets come from the environment)."""
 import os
 from pathlib import Path
 
+try:  # local development: read backend/.env (gitignored). On Railway, variables come from the service.
+    from dotenv import load_dotenv
+
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+except ImportError:  # pragma: no cover
+    pass
+
 # ---------------------------------------------------------------------------
 # Gemini AI layer
-# Paste a free key from https://aistudio.google.com/apikey here, or set the
-# GEMINI_API_KEY environment variable (the env var wins). If the key is the
-# placeholder, empty, invalid, or rate limited, every AI feature falls back to
-# the local heuristic engine in app/ai.py - the app never crashes.
+# NEVER commit a real key. Put it in backend/.env (GEMINI_API_KEY=...) for local
+# development, or in the Railway service variables for production. The constant
+# below stays empty in source control.
 # ---------------------------------------------------------------------------
 GEMINI_API_KEY = ""
 # Free-tier quotas are per model (~20 requests/day each), so calls rotate through this pool
@@ -31,11 +37,33 @@ def gemini_key() -> str:
     return key
 
 
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
-DATA_DIR.mkdir(exist_ok=True)
+DATA_DIR = Path(os.getenv("SILICOPULSE_DATA_DIR", "").strip() or Path(__file__).resolve().parent.parent / "data")
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 RUNS_PATH = DATA_DIR / "runs.parquet"
 META_PATH = DATA_DIR / "meta.json"
 
-DEFAULT_RUNS = 10_000
+
+def _env_num(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, "").strip() or default)
+    except ValueError:
+        return default
+
+
+# ---------------------------------------------------------------------------
+# Evidence thresholds (override via environment variables). They stop tiny subgroups
+# from being reported as "toxic", "anomalous" or "deterministic".
+# ---------------------------------------------------------------------------
+MIN_PAIR_SAMPLES = int(_env_num("MIN_PAIR_SAMPLES", 0))  # 0 = auto: scales with dataset size (min 15)
+MIN_GROUP_SAMPLES = int(_env_num("MIN_GROUP_SAMPLES", 30))  # parameter values / threshold groups
+MIN_SEED_RUNS = int(_env_num("MIN_SEED_RUNS", 20))  # seeds need this many runs to be scored
+MIN_PROFILE_REPEATS = int(_env_num("MIN_PROFILE_REPEATS", 5))  # repeats before calling a config deterministic
+MIN_PROFILE_SEEDS = int(_env_num("MIN_PROFILE_SEEDS", 3))  # distinct seeds before calling a config deterministic
+SIGNIFICANCE_ALPHA = _env_num("SIGNIFICANCE_ALPHA", 0.01)
+
+# CORS: comma-separated allowed origins ("*" = any, the local-development default).
+CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",") if o.strip()]
+
+DEFAULT_RUNS = int(_env_num("SILICOPULSE_DEFAULT_RUNS", 10_000))
 DEFAULT_CONFIG_PARAMS = 100
 DEFAULT_RANDOM_VARS = 51
