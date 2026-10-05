@@ -12,7 +12,7 @@ export function Select({ options, onValueChange, placeholder, className, ...prop
   return (
     <div className={cn("relative", className)}>
       <select
-        className="h-9 w-full appearance-none rounded-lg border border-slate-300 bg-white pl-3 pr-8 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-sky-500"
+        className="h-10 w-full appearance-none rounded-[10px] border border-grey-300 bg-white pl-3 pr-9 text-sm text-black hover:border-grey-400 focus:border-red-600 focus:shadow-focus focus:outline-none"
         onChange={(e) => onValueChange(e.target.value)}
         {...props}
       >
@@ -23,7 +23,7 @@ export function Select({ options, onValueChange, placeholder, className, ...prop
           </option>
         ))}
       </select>
-      <ChevronDown className="pointer-events-none absolute right-2.5 top-2.5 h-4 w-4 text-slate-500" />
+      <ChevronDown className="pointer-events-none absolute right-3 top-3 h-4 w-4 text-grey-500" strokeWidth={1.75} />
     </div>
   );
 }

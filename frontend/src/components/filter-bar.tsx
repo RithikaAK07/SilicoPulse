@@ -3,6 +3,7 @@ import { useMemo } from "react";
 import { RotateCcw } from "lucide-react";
 import { useMeta } from "@/lib/api";
 import { useFilters } from "@/lib/store";
+import { rangeFill } from "@/lib/utils";
 import { Card } from "./ui/card";
 import { Button } from "./ui/button";
 import { Select } from "./ui/select";
@@ -42,6 +43,8 @@ export function FilterBar({ compact = false }: { compact?: boolean }) {
           <div className="grid grid-cols-2 gap-3 pt-2">
             <input
               type="range"
+              className="range w-full"
+              style={rangeFill(fromIdx, 0, days.length - 1)}
               aria-label="Start date"
               min={0}
               max={days.length - 1}
@@ -53,6 +56,8 @@ export function FilterBar({ compact = false }: { compact?: boolean }) {
             />
             <input
               type="range"
+              className="range w-full"
+              style={rangeFill(toIdx, 0, days.length - 1)}
               aria-label="End date"
               min={0}
               max={days.length - 1}
@@ -76,7 +81,7 @@ export function FilterBar({ compact = false }: { compact?: boolean }) {
 function Labeled({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-slate-500">{label}</span>
+      <span className="mb-1 block text-2xs font-medium uppercase tracking-wide text-grey-500">{label}</span>
       {children}
     </label>
   );

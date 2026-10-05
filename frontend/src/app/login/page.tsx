@@ -10,7 +10,7 @@ const DEMO = [
     email: "admin@sandisk.com",
     password: "admin123",
     icon: ShieldCheck,
-    accent: "from-indigo-500 to-violet-600",
+    tile: "bg-white text-black",
     blurb: "Full access · upload data · generate datasets",
   },
   {
@@ -18,7 +18,7 @@ const DEMO = [
     email: "engineer@sandisk.com",
     password: "eng123",
     icon: Cpu,
-    accent: "from-sky-500 to-blue-600",
+    tile: "bg-grad-red text-white",
     blurb: "Analyze, diff & upload execution logs",
   },
   {
@@ -26,7 +26,7 @@ const DEMO = [
     email: "executive@sandisk.com",
     password: "exec123",
     icon: Briefcase,
-    accent: "from-amber-500 to-orange-600",
+    tile: "bg-gradient-to-br from-grey-500 to-grey-600 text-white",
     blurb: "Read-only dashboards & AI summaries",
   },
 ];
@@ -59,43 +59,43 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-slate-950 text-slate-100">
-      <div className="pointer-events-none absolute -left-40 -top-40 h-[32rem] w-[32rem] rounded-full bg-sky-600/20 blur-3xl" />
-      <div className="pointer-events-none absolute -bottom-40 -right-40 h-[32rem] w-[32rem] rounded-full bg-indigo-600/20 blur-3xl" />
-      <div className="relative mx-auto grid min-h-screen max-w-6xl items-center gap-10 px-4 py-10 sm:px-6 lg:grid-cols-[1.1fr_1fr]">
+    <div className="relative min-h-screen overflow-hidden bg-grad-login text-white">
+      <div className="relative mx-auto grid min-h-screen max-w-6xl items-center gap-12 px-4 py-10 sm:px-6 lg:grid-cols-[1.1fr_1fr]">
         <section className="hidden lg:block">
-          <div className="mb-6 flex items-center gap-3">
-            <div className="grid h-11 w-11 place-items-center rounded-xl bg-gradient-to-br from-sky-500 to-indigo-600">
-              <Cpu className="h-6 w-6 text-white" />
+          <div className="mb-8 flex items-center gap-3">
+            <div className="relative grid h-12 w-12 place-items-center rounded-[12px] border border-white/10 bg-grad-black">
+              <Cpu className="h-6 w-6 text-white" strokeWidth={1.75} />
+              <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-red-500" aria-hidden />
             </div>
             <div>
-              <div className="text-xl font-semibold leading-tight">SilicoPulse</div>
-              <div className="text-xs leading-tight text-sky-400">AI-Powered Silicon Validation &amp; Configuration Intelligence Platform</div>
+              <div className="text-2xl font-semibold leading-tight">SilicoPulse</div>
+              <div className="text-xs leading-tight text-red-400">AI-Powered Silicon Validation &amp; Configuration Intelligence Platform</div>
             </div>
           </div>
-          <h1 className="text-4xl font-semibold leading-tight tracking-tight">
-            Turn 10,000 test executions into <span className="text-sky-400">the next right configuration.</span>
+          <h1 className="text-5xl font-semibold tracking-[-0.01em] text-white">
+            Turn 10,000 test executions into{" "}
+            <span className="bg-gradient-to-r from-red-400 to-red-600 bg-clip-text text-transparent">the next right configuration.</span>
           </h1>
-          <p className="mt-4 max-w-lg text-slate-400">
+          <p className="mt-5 max-w-lg text-base text-white/70">
             Feature importance, Pareto discovery, seed determinism, root-cause fingerprints, failure-risk prediction and AI recommendations, grounded in your own execution logs.
           </p>
-          <ul className="mt-8 grid max-w-lg grid-cols-2 gap-3 text-sm text-slate-300">
+          <ul className="mt-8 grid max-w-lg grid-cols-2 gap-3 text-sm text-white">
             {["LightGBM + RF risk models", "DuckDB OLAP analytics", "Gemini AI copilot", "CSV log ingestion"].map((f) => (
-              <li key={f} className="rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2">{f}</li>
+              <li key={f} className="rounded-[10px] border border-white/[0.12] bg-white/[0.06] px-3 py-2">{f}</li>
             ))}
           </ul>
         </section>
 
-        <section className="w-full rounded-2xl border border-slate-800 bg-slate-900/80 p-6 shadow-2xl backdrop-blur sm:p-8">
+        <section className="w-full rounded-[18px] border border-white/[0.12] bg-white/[0.04] p-6 shadow-2xl backdrop-blur-md sm:p-8">
           <div className="mb-4 flex items-center gap-2 lg:hidden">
-            <div className="grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-br from-sky-500 to-indigo-600">
-              <Cpu className="h-4 w-4 text-white" />
+            <div className="grid h-9 w-9 place-items-center rounded-[10px] border border-white/10 bg-grad-black">
+              <Cpu className="h-4 w-4 text-white" strokeWidth={1.75} />
             </div>
-            <span className="font-semibold">SilicoPulse</span>
+            <span className="text-lg font-semibold">SilicoPulse</span>
           </div>
-          <h2 className="text-xl font-semibold">Welcome to SilicoPulse</h2>
-          <p className="mt-1 text-sm text-sky-400">SanDisk Hardware Validation &amp; Log Intelligence</p>
-          <p className="mt-3 text-sm text-slate-400">Use a one-click demo role or your credentials.</p>
+          <h2 className="text-3xl font-semibold text-white">Welcome to SilicoPulse</h2>
+          <p className="mt-1 text-sm text-red-400">SanDisk Hardware Validation &amp; Log Intelligence</p>
+          <p className="mt-3 text-sm text-white/70">Use a one-click demo role or your credentials.</p>
 
           <div className="mt-6 grid gap-2.5">
             {DEMO.map((d) => (
@@ -107,22 +107,22 @@ export default function LoginPage() {
                   setPassword(d.password);
                   submit(d.email, d.password);
                 }}
-                className="group flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-left transition-colors hover:border-sky-700 hover:bg-slate-900 disabled:opacity-60"
+                className="group flex items-center gap-3 rounded-xl border border-white/[0.12] bg-white/[0.04] p-3 text-left hover:border-red-600 hover:bg-white/[0.07] disabled:opacity-60"
               >
-                <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-gradient-to-br ${d.accent}`}>
-                  {busy === d.email ? <Loader2 className="h-5 w-5 animate-spin text-white" /> : <d.icon className="h-5 w-5 text-white" />}
+                <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-[10px] ${d.tile}`}>
+                  {busy === d.email ? <Loader2 className="h-5 w-5 animate-spin" strokeWidth={1.75} /> : <d.icon className="h-5 w-5" strokeWidth={1.75} />}
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="block text-sm font-medium text-slate-100">{d.label}</span>
-                  <span className="block truncate text-xs text-slate-400">{d.blurb}</span>
+                  <span className="block text-base font-semibold text-white">{d.label}</span>
+                  <span className="block truncate text-xs text-white/65">{d.blurb}</span>
                 </span>
-                <ArrowRight className="h-4 w-4 text-slate-500 transition-transform group-hover:translate-x-0.5 group-hover:text-sky-400" />
+                <ArrowRight className="h-4 w-4 text-white/50 transition-transform group-hover:translate-x-0.5 group-hover:text-red-400" strokeWidth={1.75} />
               </button>
             ))}
           </div>
 
-          <div className="my-6 flex items-center gap-3 text-xs text-slate-500">
-            <span className="h-px flex-1 bg-slate-800" /> or sign in with email <span className="h-px flex-1 bg-slate-800" />
+          <div className="my-6 flex items-center gap-3 text-xs text-white/60">
+            <span className="h-px flex-1 bg-white/[0.12]" /> or sign in with email <span className="h-px flex-1 bg-white/[0.12]" />
           </div>
 
           <form
@@ -134,7 +134,7 @@ export default function LoginPage() {
           >
             <label className="relative block">
               <span className="sr-only">Email</span>
-              <Mail className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-slate-500" />
+              <Mail className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-white/55" strokeWidth={1.75} />
               <input
                 type="email"
                 required
@@ -142,12 +142,12 @@ export default function LoginPage() {
                 placeholder="you@sandisk.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="h-10 w-full rounded-lg border border-slate-700 bg-slate-950 pl-9 pr-3 text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-500"
+                className="h-10 w-full rounded-[10px] border border-white/[0.16] bg-white/[0.06] pl-9 pr-3 text-sm text-white placeholder:text-white/50 hover:border-white/30 focus:border-red-500 focus:shadow-focus focus:outline-none"
               />
             </label>
             <label className="relative block">
               <span className="sr-only">Password</span>
-              <Lock className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-slate-500" />
+              <Lock className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-white/55" strokeWidth={1.75} />
               <input
                 type="password"
                 required
@@ -155,23 +155,23 @@ export default function LoginPage() {
                 placeholder="Password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="h-10 w-full rounded-lg border border-slate-700 bg-slate-950 pl-9 pr-3 text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-500"
+                className="h-10 w-full rounded-[10px] border border-white/[0.16] bg-white/[0.06] pl-9 pr-3 text-sm text-white placeholder:text-white/50 hover:border-white/30 focus:border-red-500 focus:shadow-focus focus:outline-none"
               />
             </label>
             {error && (
-              <div className="flex items-start gap-2 rounded-lg border border-red-900/60 bg-red-950/40 px-3 py-2 text-sm text-red-200">
-                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" /> {error}
+              <div className="flex items-start gap-2 rounded-[10px] border border-red-500/50 bg-red-600/15 px-3 py-2 text-sm text-red-100">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-400" strokeWidth={1.75} /> {error}
               </div>
             )}
             <button
               type="submit"
               disabled={!!busy}
-              className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-sky-600 text-sm font-medium text-white transition-colors hover:bg-sky-500 disabled:opacity-60"
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-[10px] bg-grad-red text-sm font-semibold text-white shadow-cta hover:-translate-y-px hover:brightness-110 active:translate-y-0 active:brightness-100 disabled:opacity-60"
             >
               {busy === email || busy === "form" ? <Loader2 className="h-4 w-4 animate-spin" /> : null} Sign in
             </button>
           </form>
-          <p className="mt-6 text-center text-[11px] text-slate-500">Demo environment · mock identities · JWT session (8h)</p>
+          <p className="mt-6 text-center text-2xs text-white/60">Demo environment · mock identities · JWT session (8h)</p>
         </section>
       </div>
     </div>

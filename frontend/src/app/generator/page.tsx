@@ -38,12 +38,12 @@ export default function GeneratorPage() {
         title="Synthetic Log & Telemetry Dataset Generator"
         subtitle="Generate a fresh, realistic test campaign in one click: executions, configuration flags, randomized seeds and perturbations, telemetry, pass/fail outcomes and multi-line log traces. All models retrain automatically."
       />
-      <div className="grid gap-4 xl:grid-cols-[1fr_1.4fr]">
+      <div className="grid gap-6 xl:grid-cols-[1fr_1.4fr]">
         <Card>
           <CardHeader>
             <div>
               <CardTitle className="flex items-center gap-2">
-                <Zap className="h-4 w-4 text-amber-700" /> Generate dataset
+                <Zap className="h-5 w-5 text-black" strokeWidth={1.75} /> Generate dataset
               </CardTitle>
               <CardDescription>A hidden ground-truth failure model mixes deterministic config interactions with stochastic seed, thermal and jitter effects.</CardDescription>
             </div>
@@ -51,9 +51,14 @@ export default function GeneratorPage() {
           <CardContent>
             <div className="mb-4 flex flex-wrap gap-2">
               {PRESETS.map((p) => (
-                <Button key={p.label} variant="outline" size="sm" onClick={() => setForm({ ...form, n_runs: p.n_runs, n_config: p.n_config, n_random: p.n_random })}>
+                <button
+                  key={p.label}
+                  aria-pressed={form.n_runs === p.n_runs && form.n_config === p.n_config && form.n_random === p.n_random}
+                  onClick={() => setForm({ ...form, n_runs: p.n_runs, n_config: p.n_config, n_random: p.n_random })}
+                  className="h-8 rounded-full border border-grey-300 bg-white px-3.5 text-xs font-semibold text-black hover:border-black aria-pressed:border-black aria-pressed:bg-grad-black aria-pressed:text-white"
+                >
                   {p.label}
-                </Button>
+                </button>
               ))}
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
@@ -62,13 +67,13 @@ export default function GeneratorPage() {
               <NumField label="Randomized variables" value={form.n_random} min={6} max={200} onChange={(v) => setForm({ ...form, n_random: v })} />
               <NumField label="Generator seed" value={form.seed} min={0} max={999999} onChange={(v) => setForm({ ...form, seed: v })} />
             </div>
-            <Button size="lg" className="mt-5 w-full" onClick={() => gen.mutate()} disabled={gen.isPending || !can("generate")}>
+            <Button variant="primary" size="lg" className="mt-5 w-full" onClick={() => gen.mutate()} disabled={gen.isPending || !can("generate")}>
               {gen.isPending ? <Spinner label="Generating data & retraining models…" /> : <><Database className="h-4 w-4" /> Generate {num(form.n_runs)} executions</>}
             </Button>
             {gen.error && <p className="mt-3 text-sm text-red-700">{String(gen.error)}</p>}
             {gen.data && (
-              <div className="mt-4 flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
-                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+              <div className="mt-6 flex items-start gap-2 rounded-lg border border-grey-300 bg-grey-50 p-3 text-sm text-black">
+                <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full border border-grey-300 bg-white"><CheckCircle2 className="h-3.5 w-3.5 text-black" strokeWidth={2} /></span>
                 <span>
                   Generated {num((gen.data as any).n_runs)} executions in {(gen.data as any).generation_seconds}s and retrained all models in{" "}
                   {(gen.data as any).training_seconds}s (AUC {(gen.data as any).model.auc.toFixed(3)}). Every dashboard now reflects the new dataset.
@@ -84,7 +89,7 @@ export default function GeneratorPage() {
               <CardDescription>{m ? `Generated ${new Date(m.generated_at).toLocaleString()}` : "Loading…"}</CardDescription>
             </div>
             {sample.data && (
-              <Button variant="outline" size="sm" onClick={() => exportCSV("executions_sample.csv", sample.data!)}>
+              <Button size="sm" onClick={() => exportCSV("executions_sample.csv", sample.data!)}>
                 <Download className="h-4 w-4" /> Sample CSV
               </Button>
             )}
@@ -100,8 +105,8 @@ export default function GeneratorPage() {
                   ["Log lines", num(m.log_lines)],
                   ["ML engine", m.model.engine],
                 ].map(([k, v]) => (
-                  <div key={k} className="rounded-lg border border-slate-200 p-3">
-                    <div className="text-[11px] text-slate-500">{k}</div>
+                  <div key={k} className="rounded-lg border border-grey-200 p-3">
+                    <div className="text-2xs text-grey-500">{k}</div>
                     <div className="text-sm font-semibold">{v}</div>
                   </div>
                 ))}
@@ -121,9 +126,9 @@ export default function GeneratorPage() {
           {sample.isLoading ? (
             <Spinner label="Loading sample…" />
           ) : (
-            <div className="max-h-96 overflow-auto rounded-lg border border-slate-200">
-              <table className="text-[11px]">
-                <thead className="sticky top-0 bg-white text-slate-500">
+            <div className="max-h-96 overflow-auto rounded-lg border border-grey-200">
+              <table className="text-2xs">
+                <thead className="sticky top-0 bg-white text-grey-500">
                   <tr>
                     {cols.map((c) => (
                       <th key={c} className="whitespace-nowrap px-2.5 py-1.5 text-left font-medium">{c}</th>
@@ -132,9 +137,9 @@ export default function GeneratorPage() {
                 </thead>
                 <tbody className="tabular-nums">
                   {sample.data?.map((r, i) => (
-                    <tr key={i} className="border-t border-slate-200">
+                    <tr key={i} className="border-t border-grey-200">
                       {cols.map((c) => (
-                        <td key={c} className={`whitespace-nowrap px-2.5 py-1 ${c === "outcome" ? (r[c] === "fail" ? "text-red-700" : "text-emerald-700") : "text-slate-700"}`}>
+                        <td key={c} className={`whitespace-nowrap px-2.5 py-1 ${c === "outcome" ? (r[c] === "fail" ? "text-red-700" : "text-black") : "text-grey-800"}`}>
                           {typeof r[c] === "number" && !Number.isInteger(r[c]) ? r[c].toFixed(3) : String(r[c])}
                         </td>
                       ))}
@@ -153,14 +158,14 @@ export default function GeneratorPage() {
 function NumField({ label, value, min, max, onChange }: { label: string; value: number; min: number; max: number; onChange: (v: number) => void }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-slate-500">{label}</span>
+      <span className="mb-1 block text-2xs font-medium uppercase tracking-wide text-grey-500">{label}</span>
       <input
         type="number"
         min={min}
         max={max}
         value={value}
         onChange={(e) => onChange(Math.max(min, Math.min(max, +e.target.value || min)))}
-        className="h-9 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-sky-500"
+        className="h-10 w-full rounded-[10px] border border-grey-300 bg-white px-3 text-sm tabular-nums hover:border-grey-400 focus:border-red-600 focus:shadow-focus focus:outline-none"
       />
     </label>
   );

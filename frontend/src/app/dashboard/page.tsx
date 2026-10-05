@@ -1,8 +1,8 @@
 "use client";
 import { Activity, AlertOctagon, CheckCircle2, Gauge, Sparkles, Waves } from "lucide-react";
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { useOverview, useSummary } from "@/lib/api";
-import { INK, SERIES, STATUS, STATUS_INK, num, pct } from "@/lib/utils";
+import { BAR, INK, SERIES, STATUS, STATUS_INK, num, pct } from "@/lib/utils";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { FilterBar } from "@/components/filter-bar";
@@ -26,7 +26,7 @@ export default function DashboardPage() {
         <Loading rows={2} />
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-5 xl:gap-6">
             <KpiCard label="Total Executions" value={num(k.total_executions)} sub={`${k.unique_configs} profiles · ${k.unique_seeds} seeds`} icon={Activity} accent={SERIES[0]} />
             <KpiCard
               label="Pass / Fail Ratio"
@@ -45,17 +45,17 @@ export default function DashboardPage() {
           </div>
           <DataQualityStrip />
 
-          <Card className="mt-4 border-sky-200 bg-gradient-to-br from-white to-sky-50">
+          <Card className="mt-6 border-grey-200 bg-grad-banner">
             <CardHeader>
               <div>
                 <CardTitle className="flex items-center gap-2">
-                  <Sparkles className="h-4 w-4 text-sky-600" /> GenAI Executive Summary
+                  <Sparkles className="h-5 w-5 text-red-600" strokeWidth={1.75} /> GenAI Executive Summary
                 </CardTitle>
                 <CardDescription>Synthesizes all executions and log lines into a presentation-ready brief.</CardDescription>
               </div>
               <div className="flex items-center gap-2">
                 <SourceBadge source={summary.data?.source} />
-                <Button size="sm" onClick={() => summary.refetch()} disabled={summary.isFetching}>
+                <Button variant="primary" size="sm" onClick={() => summary.refetch()} disabled={summary.isFetching}>
                   {summary.isFetching ? <Spinner /> : <Sparkles className="h-4 w-4" />}
                   {summary.data ? "Regenerate" : "Generate summary"}
                 </Button>
@@ -69,14 +69,14 @@ export default function DashboardPage() {
               ) : summary.error ? (
                 <p className="text-sm text-red-700">{String(summary.error)}</p>
               ) : (
-                <p className="text-sm text-slate-500">Click <b>Generate summary</b> for an instant AI brief of pass rate, top drivers, determinism and root causes.</p>
+                <p className="text-sm text-grey-500">Click <b>Generate summary</b> for an instant AI brief of pass rate, top drivers, determinism and root causes.</p>
               )}
             </CardContent>
           </Card>
 
           <TopInsights />
 
-          <div className="mt-4 grid gap-4 xl:grid-cols-2">
+          <div className="mt-6 grid gap-6 xl:grid-cols-2">
             <Card>
               <CardHeader>
                 <div>
@@ -89,14 +89,14 @@ export default function DashboardPage() {
                   <AreaChart data={data.trend} margin={{ left: -10, right: 8 }}>
                     <defs>
                       <linearGradient id="fr" x1="0" x2="0" y1="0" y2="1">
-                        <stop offset="0%" stopColor={SERIES[1]} stopOpacity={0.35} />
+                        <stop offset="0%" stopColor={SERIES[1]} stopOpacity={0.18} />
                         <stop offset="100%" stopColor={SERIES[1]} stopOpacity={0} />
                       </linearGradient>
                     </defs>
                     <CartesianGrid stroke={INK.grid} vertical={false} />
                     <XAxis dataKey="day" {...axisProps} minTickGap={40} />
                     <YAxis {...axisProps} tickFormatter={(v) => pct(v, 0)} />
-                    <Tooltip content={<ChartTooltip fmt={(v: number) => pct(v)} />} cursor={{ stroke: "#94a3b8" }} />
+                    <Tooltip content={<ChartTooltip fmt={(v: number) => pct(v)} />} cursor={{ stroke: "#A1A1AA" }} />
                     <Area isAnimationActive={false} dataKey="fail_rate" name="Failure rate" stroke={SERIES[1]} strokeWidth={2} fill="url(#fr)" activeDot={{ r: 4, stroke: INK.surface, strokeWidth: 2 }} />
                   </AreaChart>
                 </ResponsiveContainer>
@@ -115,7 +115,7 @@ export default function DashboardPage() {
                     <CartesianGrid stroke={INK.grid} vertical={false} />
                     <XAxis dataKey="day" {...axisProps} minTickGap={40} />
                     <YAxis {...axisProps} tickFormatter={(v) => num(v)} />
-                    <Tooltip content={<ChartTooltip fmt={(v: number) => `${num(v)} MB/s`} />} cursor={{ stroke: "#94a3b8" }} />
+                    <Tooltip content={<ChartTooltip fmt={(v: number) => `${num(v)} MB/s`} />} cursor={{ stroke: "#A1A1AA" }} />
                     <Line isAnimationActive={false} dataKey="tput" name="Throughput" stroke={SERIES[0]} strokeWidth={2} dot={false} activeDot={{ r: 4, stroke: INK.surface, strokeWidth: 2 }} />
                   </LineChart>
                 </ResponsiveContainer>
@@ -130,12 +130,16 @@ export default function DashboardPage() {
               </CardHeader>
               <CardContent className="h-72">
                 <ResponsiveContainer>
-                  <BarChart data={data.signatures} layout="vertical" margin={{ left: 70, right: 24 }} barCategoryGap={4}>
+                  <BarChart data={data.signatures} layout="vertical" margin={{ left: 70, right: 48 }} barCategoryGap={4}>
                     <CartesianGrid stroke={INK.grid} horizontal={false} />
                     <XAxis type="number" {...axisProps} />
                     <YAxis type="category" dataKey="signature" {...axisProps} width={160} />
-                    <Tooltip content={<ChartTooltip fmt={(v: number) => num(v)} />} cursor={{ fill: "#e2e8f0aa" }} />
-                    <Bar isAnimationActive={false} dataKey="count" name="Failures" fill={SERIES[0]} radius={[0, 4, 4, 0]} label={{ position: "right", fill: INK.muted, fontSize: 11 }} />
+                    <Tooltip content={<ChartTooltip fmt={(v: number) => num(v)} />} cursor={{ fill: "rgba(14,14,16,0.04)" }} />
+                    <Bar isAnimationActive={false} dataKey="count" name="Failures" fill={BAR.base} radius={[0, 4, 4, 0]} label={{ position: "right", fill: INK.muted, fontSize: 12 }}>
+                      {data.signatures.map((x: any, i: number) => (
+                        <Cell key={x.signature} fill={i === 0 ? BAR.highlight : BAR.base} />
+                      ))}
+                    </Bar>
                   </BarChart>
                 </ResponsiveContainer>
               </CardContent>
@@ -153,8 +157,12 @@ export default function DashboardPage() {
                     <CartesianGrid stroke={INK.grid} vertical={false} />
                     <XAxis dataKey="hardware" {...axisProps} />
                     <YAxis {...axisProps} tickFormatter={(v) => pct(v, 0)} />
-                    <Tooltip content={<ChartTooltip fmt={(v: number) => pct(v)} />} cursor={{ fill: "#e2e8f0aa" }} />
-                    <Bar isAnimationActive={false} dataKey="fail_rate" name="Failure rate" fill={SERIES[0]} radius={[4, 4, 0, 0]} maxBarSize={56} label={{ position: "top", fill: INK.secondary, fontSize: 11, formatter: (v: number) => pct(v) }} />
+                    <Tooltip content={<ChartTooltip fmt={(v: number) => pct(v)} />} cursor={{ fill: "rgba(14,14,16,0.04)" }} />
+                    <Bar isAnimationActive={false} dataKey="fail_rate" name="Failure rate" fill={BAR.base} radius={[4, 4, 0, 0]} maxBarSize={56} label={{ position: "top", fill: INK.secondary, fontSize: 12, formatter: (v: number) => pct(v) }}>
+                      {data.by_hardware.map((h: any) => (
+                        <Cell key={h.hardware} fill={h.fail_rate === Math.max(...data.by_hardware.map((x: any) => x.fail_rate)) ? BAR.highlight : BAR.base} />
+                      ))}
+                    </Bar>
                   </BarChart>
                 </ResponsiveContainer>
               </CardContent>

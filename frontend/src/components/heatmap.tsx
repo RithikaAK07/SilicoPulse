@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { pct, seqColor } from "@/lib/utils";
+import { pct, seqColor, seqText } from "@/lib/utils";
 
 interface Cell {
   row: string;
@@ -20,9 +20,9 @@ export function Heatmap({ rows, cols, cells, rowLabel }: { rows: string[]; cols:
         <table className="w-full border-separate" style={{ borderSpacing: 2 }}>
           <thead>
             <tr>
-              <th className="pr-2 text-left text-[10px] font-medium uppercase text-slate-500">{rowLabel}</th>
+              <th className="pr-2 text-left text-2xs font-medium uppercase text-grey-500">{rowLabel}</th>
               {cols.map((c) => (
-                <th key={c} className="text-center text-[10px] font-medium text-slate-500">
+                <th key={c} className="text-center text-2xs font-medium text-grey-500">
                   {c}
                 </th>
               ))}
@@ -31,7 +31,7 @@ export function Heatmap({ rows, cols, cells, rowLabel }: { rows: string[]; cols:
           <tbody>
             {rows.map((r) => (
               <tr key={r}>
-                <td className="pr-2 font-mono text-[11px] text-slate-700">{r}</td>
+                <td className="pr-2 font-mono text-2xs text-grey-800">{r}</td>
                 {cols.map((c) => {
                   const cell = map.get(`${r}|${c}`);
                   const t = cell ? cell.fail_rate / hi : 0;
@@ -40,8 +40,8 @@ export function Heatmap({ rows, cols, cells, rowLabel }: { rows: string[]; cols:
                       key={c}
                       onMouseEnter={() => cell && setHover(cell)}
                       onMouseLeave={() => setHover(null)}
-                      className="h-6 min-w-[3rem] rounded-[3px] text-center text-[10px] tabular-nums hover:outline hover:outline-2 hover:outline-slate-800"
-                      style={{ background: cell ? seqColor(t) : "#f8fafc", color: t > 0.45 ? "#ffffff" : "#0f172a" }}
+                      className="h-6 min-w-[3rem] rounded-[3px] text-center text-2xs tabular-nums hover:outline hover:outline-2 hover:outline-grey-800"
+                      style={{ background: cell ? seqColor(t) : "#F7F7F9", color: seqText(t) }}
                     >
                       {cell && t > 0.45 ? pct(cell.fail_rate, 0) : ""}
                     </td>
@@ -52,12 +52,12 @@ export function Heatmap({ rows, cols, cells, rowLabel }: { rows: string[]; cols:
           </tbody>
         </table>
       </div>
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-grey-500">
         <span className="min-h-4">
           {hover ? (
             <>
-              {rowLabel} <b className="text-slate-900">{hover.row}</b> · band <b className="text-slate-900">{hover.col}</b> · failure rate{" "}
-              <b className="text-slate-900">{pct(hover.fail_rate)}</b> over {hover.runs} runs
+              {rowLabel} <b className="text-black">{hover.row}</b> · band <b className="text-black">{hover.col}</b> · failure rate{" "}
+              <b className="text-black">{pct(hover.fail_rate)}</b> over {hover.runs} runs
             </>
           ) : (
             "Hover a cell for details"

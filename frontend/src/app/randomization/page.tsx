@@ -1,9 +1,9 @@
 "use client";
 import { useState } from "react";
 import { AlertTriangle } from "lucide-react";
-import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis } from "recharts";
 import { useDrift, useRandomization } from "@/lib/api";
-import { INK, SERIES, STATUS, STATUS_INK, num, pct } from "@/lib/utils";
+import { BAR, INK, SERIES, STATUS, STATUS_INK, num, pct } from "@/lib/utils";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ChartTooltip, ErrorState, Loading, PageHeader, axisProps } from "@/components/common";
@@ -44,8 +44,8 @@ function Content({ data }: { data: any }) {
   const curveVars = Object.keys(data.curves);
   const hm = pv ? data.heatmaps[pv] : null;
   return (
-    <div className="grid gap-4">
-      <div className="grid gap-4 xl:grid-cols-[1.1fr_1fr]">
+    <div className="grid gap-6">
+      <div className="grid gap-6 xl:grid-cols-[1.1fr_1fr]">
         <Card>
           <CardHeader>
             <div>
@@ -60,20 +60,24 @@ function Content({ data }: { data: any }) {
                 <XAxis type="number" {...axisProps} />
                 <YAxis type="category" dataKey="variable" {...axisProps} width={130} interval={0} />
                 <Tooltip
-                  cursor={{ fill: "#e2e8f0aa" }}
+                  cursor={{ fill: "rgba(14,14,16,0.04)" }}
                   content={({ active, payload }: any) => {
                     const p = active && payload?.[0]?.payload;
                     return p ? (
-                      <div className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-700">
-                        <div className="font-medium text-slate-900">{p.variable}</div>
-                        <div>Impact score <b className="text-slate-900">{p.impact_score.toFixed(3)}</b></div>
+                      <div className="chart-tip">
+                        <div className="font-medium text-black">{p.variable}</div>
+                        <div>Impact score <b className="text-black">{p.impact_score.toFixed(3)}</b></div>
                         <div>Failure-rate swing {pct(p.fail_rate_spread)}</div>
                         <div>RF importance {p.rf_importance.toFixed(4)} · MI {p.mutual_info.toFixed(4)}</div>
                       </div>
                     ) : null;
                   }}
                 />
-                <Bar isAnimationActive={false} dataKey="impact_score" name="Impact" fill={SERIES[0]} radius={[0, 4, 4, 0]} label={{ position: "right", fill: INK.muted, fontSize: 10, formatter: (v: number) => v.toFixed(2) }} />
+                <Bar isAnimationActive={false} dataKey="impact_score" name="Impact" fill={BAR.base} radius={[0, 4, 4, 0]} label={{ position: "right", fill: INK.muted, fontSize: 12, formatter: (v: number) => v.toFixed(2) }}>
+                  {data.sensitivity.slice(0, 12).map((x: any, i: number) => (
+                    <Cell key={x.variable} fill={i === 0 ? BAR.highlight : BAR.base} />
+                  ))}
+                </Bar>
               </BarChart>
             </ResponsiveContainer>
           </CardContent>
@@ -87,13 +91,13 @@ function Content({ data }: { data: any }) {
           </CardHeader>
           <CardContent className="grid grid-cols-2 gap-3">
             {curveVars.map((v) => (
-              <div key={v} className="h-40 rounded-lg border border-slate-200 p-2">
-                <div className="mb-1 text-[11px] font-medium text-slate-700">{v}</div>
+              <div key={v} className="h-40 rounded-lg border border-grey-200 p-2">
+                <div className="mb-1 text-2xs font-medium text-grey-800">{v}</div>
                 <ResponsiveContainer height="85%">
                   <LineChart data={data.curves[v]} margin={{ left: -24, right: 6, top: 4 }}>
                     <CartesianGrid stroke={INK.grid} vertical={false} />
-                    <XAxis dataKey="x" {...axisProps} tick={{ fill: INK.muted, fontSize: 9 }} tickFormatter={(t) => (Math.abs(t) >= 10 ? t.toFixed(0) : t.toFixed(2))} />
-                    <YAxis {...axisProps} tick={{ fill: INK.muted, fontSize: 9 }} tickFormatter={(t) => pct(t, 0)} />
+                    <XAxis dataKey="x" {...axisProps} tick={{ fill: INK.muted, fontSize: 12 }} tickFormatter={(t) => (Math.abs(t) >= 10 ? t.toFixed(0) : t.toFixed(2))} />
+                    <YAxis {...axisProps} tick={{ fill: INK.muted, fontSize: 12 }} tickFormatter={(t) => pct(t, 0)} />
                     <Tooltip content={<ChartTooltip fmt={(x: number) => pct(x)} labelFmt={(l: number) => `${v} ≈ ${l}`} />} />
                     <Line isAnimationActive={false} dataKey="fail_rate" name="Failure rate" stroke={SERIES[1]} strokeWidth={2} dot={{ r: 3, fill: SERIES[1], strokeWidth: 0 }} />
                   </LineChart>
@@ -104,7 +108,7 @@ function Content({ data }: { data: any }) {
         </Card>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-2">
+      <div className="grid gap-6 xl:grid-cols-2">
         <Card>
           <CardHeader>
             <div>
@@ -116,7 +120,7 @@ function Content({ data }: { data: any }) {
                 <button
                   key={k}
                   onClick={() => setPv(k)}
-                  className={`rounded-md px-2 py-1 text-[11px] ${pv === k ? "bg-sky-100 text-sky-700" : "text-slate-500 hover:bg-slate-100"}`}
+                  className={`rounded-md px-2 py-1 text-2xs ${pv === k ? "bg-grad-black text-white" : "text-grey-600 hover:bg-grey-100"}`}
                 >
                   {pretty(k)}
                 </button>
@@ -148,28 +152,28 @@ function Content({ data }: { data: any }) {
               <ScatterChart margin={{ left: 0, right: 16, bottom: 12 }}>
                 <CartesianGrid stroke={INK.grid} />
                 <XAxis type="number" dataKey="expected" name="Expected" {...axisProps} tickFormatter={(v) => pct(v, 0)} domain={["auto", "auto"]}
-                  label={{ value: "Expected failure rate", position: "insideBottom", offset: -6, fill: INK.muted, fontSize: 11 }} />
+                  label={{ value: "Expected failure rate", position: "insideBottom", offset: -6, fill: INK.muted, fontSize: 12 }} />
                 <YAxis type="number" dataKey="observed" name="Observed" {...axisProps} tickFormatter={(v) => pct(v, 0)} domain={["auto", "auto"]} />
                 <ZAxis dataKey="runs" range={[40, 160]} />
-                <ReferenceLine segment={[{ x: 0.15, y: 0.15 }, { x: 0.4, y: 0.4 }]} stroke="#475569" strokeDasharray="4 4" ifOverflow="extendDomain" />
+                <ReferenceLine segment={[{ x: 0.15, y: 0.15 }, { x: 0.4, y: 0.4 }]} stroke="#A1A1AA" strokeDasharray="4 4" ifOverflow="extendDomain" />
                 <Tooltip
                   cursor={{ strokeDasharray: "3 3" }}
                   content={({ active, payload }: any) => {
                     const p = active && payload?.[0]?.payload;
                     return p ? (
-                      <div className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-700">
-                        <div className="font-medium text-slate-900">Seed {p.seed} {p.flag && <span style={{ color: STATUS_INK.critical }}>· anomalous</span>}</div>
+                      <div className="chart-tip">
+                        <div className="font-medium text-black">Seed {p.seed} {p.flag && <span className="text-red-400">· anomalous</span>}</div>
                         <div>Observed {pct(p.observed)} vs expected {pct(p.expected)}</div>
                         <div>Lift {p.lift}× · z = {p.z} · p = {p.p_value != null ? (p.p_value < 0.001 ? p.p_value.toExponential(1) : p.p_value.toFixed(3)) : "–"}</div>
                         {p.ci95 && <div>95% CI {pct(p.ci95[0])} – {pct(p.ci95[1])}</div>}
-                        {p.sufficient_samples === false && <div className="text-amber-700">Too few runs to score</div>}
+                        {p.sufficient_samples === false && <div className="text-red-900">Too few runs to score</div>}
                         <div>{p.runs} runs</div>
                       </div>
                     ) : null;
                   }}
                 />
                 <Legend wrapperStyle={{ fontSize: 12 }} verticalAlign="top" height={28} />
-                <Scatter isAnimationActive={false} name="Normal seed" data={data.seeds.filter((s: any) => !s.flag)} fill={SERIES[0]} fillOpacity={0.7} />
+                <Scatter isAnimationActive={false} name="Normal seed" data={data.seeds.filter((s: any) => !s.flag)} fill={SERIES[2]} fillOpacity={0.7} />
                 <Scatter isAnimationActive={false} name="Anomalous seed (significant)" data={flagged} fill={STATUS.critical} shape="diamond" />
               </ScatterChart>
             </ResponsiveContainer>
@@ -178,7 +182,7 @@ function Content({ data }: { data: any }) {
         </Card>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[1fr_1.3fr]">
+      <div className="grid gap-6 xl:grid-cols-[1fr_1.3fr]">
         <Card>
           <CardHeader>
             <div>
@@ -190,16 +194,16 @@ function Content({ data }: { data: any }) {
           </CardHeader>
           <CardContent>
             <div className="mb-4 grid grid-cols-2 gap-3">
-              <div className="rounded-lg border border-slate-200 p-3">
-                <div className="text-xs text-slate-500">Deterministic failures</div>
+              <div className="rounded-lg border border-grey-200 p-3">
+                <div className="text-xs text-grey-500">Deterministic failures</div>
                 <div className="text-2xl font-semibold">{num(detCount)}</div>
-                <div className="text-xs text-slate-500">{pct(detCount / (detCount + stoCount))} of failures</div>
+                <div className="text-xs text-grey-500">{pct(detCount / (detCount + stoCount))} of failures</div>
               </div>
-              <div className="rounded-lg border border-slate-200 p-3">
-                <div className="text-xs text-slate-500">Stochastic failures</div>
+              <div className="rounded-lg border border-grey-200 p-3">
+                <div className="text-xs text-grey-500">Stochastic failures</div>
                 <div className="text-2xl font-semibold">{num(stoCount)}</div>
-                <div className="text-xs text-slate-500">{pct(stoCount / (detCount + stoCount))} of failures</div>
-                {insufficient > 0 && <div className="mt-1 text-[11px] text-amber-700">{num(insufficient)} more lack enough repeats/seeds to classify</div>}
+                <div className="text-xs text-grey-500">{pct(stoCount / (detCount + stoCount))} of failures</div>
+                {insufficient > 0 && <div className="mt-1 text-2xs text-red-900">{num(insufficient)} more lack enough repeats/seeds to classify</div>}
               </div>
             </div>
             <div className="h-64">
@@ -207,11 +211,11 @@ function Content({ data }: { data: any }) {
                 <BarChart data={det.by_signature} layout="vertical" margin={{ left: 60, right: 10 }} barCategoryGap={4}>
                   <CartesianGrid stroke={INK.grid} horizontal={false} />
                   <XAxis type="number" {...axisProps} />
-                  <YAxis type="category" dataKey="error_signature" {...axisProps} width={150} interval={0} tick={{ fill: INK.muted, fontSize: 10 }} />
-                  <Tooltip content={<ChartTooltip />} cursor={{ fill: "#e2e8f0aa" }} />
+                  <YAxis type="category" dataKey="error_signature" {...axisProps} width={150} interval={0} tick={{ fill: INK.muted, fontSize: 12 }} />
+                  <Tooltip content={<ChartTooltip />} cursor={{ fill: "rgba(14,14,16,0.04)" }} />
                   <Legend wrapperStyle={{ fontSize: 12 }} />
-                  <Bar isAnimationActive={false} dataKey="deterministic" name="Deterministic" stackId="a" fill={SERIES[1]} stroke={INK.surface} strokeWidth={2} />
-                  <Bar isAnimationActive={false} dataKey="stochastic" name="Stochastic" stackId="a" fill={SERIES[0]} stroke={INK.surface} strokeWidth={2} radius={[0, 4, 4, 0]} />
+                  <Bar isAnimationActive={false} dataKey="deterministic" name="Deterministic" stackId="a" fill={SERIES[0]} stroke={INK.surface} strokeWidth={2} />
+                  <Bar isAnimationActive={false} dataKey="stochastic" name="Stochastic" stackId="a" fill={SERIES[3]} stroke={INK.surface} strokeWidth={2} radius={[0, 4, 4, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -236,7 +240,7 @@ function Content({ data }: { data: any }) {
                     content={({ active, payload }: any) => {
                       const p = active && payload?.[0]?.payload;
                       return p ? (
-                        <div className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-700">
+                        <div className="chart-tip">
                           Cluster {p.cluster} · <span className="font-mono">{p.signature}</span>
                         </div>
                       ) : null;
@@ -248,7 +252,7 @@ function Content({ data }: { data: any }) {
                       key={c.cluster}
                       name={`C${c.cluster}`}
                       data={det.clusters.points.filter((p: any) => p.cluster === c.cluster)}
-                      fill={SERIES[c.cluster % SERIES.length]}
+                      fill={CLUSTER[c.cluster % CLUSTER.length]}
                       fillOpacity={0.75}
                       shape={SHAPES[c.cluster % SHAPES.length]}
                     />
@@ -258,13 +262,13 @@ function Content({ data }: { data: any }) {
             </div>
             <div className="mt-3 grid gap-2 sm:grid-cols-2">
               {det.clusters.summary.map((c: any) => (
-                <div key={c.cluster} className="flex items-start gap-2 rounded-lg border border-slate-200 p-2 text-[11px]">
-                  <span className="mt-0.5 h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: SERIES[c.cluster % SERIES.length] }} />
+                <div key={c.cluster} className="flex items-start gap-2 rounded-lg border border-grey-200 p-2 text-2xs">
+                  <span className="mt-0.5 h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: CLUSTER[c.cluster % CLUSTER.length] }} />
                   <div>
-                    <div className="text-slate-800">
+                    <div className="text-grey-800">
                       C{c.cluster} ({SHAPES[c.cluster % SHAPES.length]}) · {num(c.size)} runs · <span className="font-mono">{c.dominant_signature}</span> ({pct(c.purity, 0)})
                     </div>
-                    <div className="text-slate-500">{c.drivers.join(", ")}</div>
+                    <div className="text-grey-500">{c.drivers.join(", ")}</div>
                   </div>
                 </div>
               ))}
@@ -278,7 +282,7 @@ function Content({ data }: { data: any }) {
 
 function NoSeed({ what }: { what: string }) {
   return (
-    <div className="grid h-full min-h-40 place-items-center rounded-lg border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">
+    <div className="grid h-full min-h-40 place-items-center rounded-lg border border-dashed border-grey-300 p-6 text-center text-sm text-grey-500">
       <div>
         The active dataset has no random-seed column, so {what} is unavailable.
         <div className="mt-1 text-xs">Map a seed column on the CSV Data Upload tab to enable it.</div>
@@ -288,11 +292,13 @@ function NoSeed({ what }: { what: string }) {
 }
 
 const DRIFT_COLORS = [SERIES[1], SERIES[0], SERIES[2]];
+/** at most 5 colours; clusters are also told apart by marker shape */
+const CLUSTER = SERIES.slice(0, 5);
 
 function DriftSection({ d }: { d: any }) {
   const vars = (d.variables as any[]).map((v, i) => ({ ...v, color: DRIFT_COLORS[i % DRIFT_COLORS.length], label: pretty(v.label) }));
   return (
-    <div className="grid gap-4">
+    <div className="grid gap-6">
       <Card>
         <CardHeader>
           <div>
@@ -315,11 +321,11 @@ function DriftSection({ d }: { d: any }) {
             ))}
           </div>
         </CardHeader>
-        <CardContent className="grid gap-4 lg:grid-cols-3">
-          {!vars.length && <p className="text-sm text-slate-500">No continuous randomized variables in the active dataset.</p>}
+        <CardContent className="grid gap-6 lg:grid-cols-3">
+          {!vars.length && <p className="text-sm text-grey-500">No continuous randomized variables in the active dataset.</p>}
           {vars.map((v) => (
-            <div key={v.key} className="rounded-lg border border-slate-200 p-3">
-              <div className="mb-2 text-xs font-medium text-slate-700">{v.label}</div>
+            <div key={v.key} className="rounded-lg border border-grey-200 p-3">
+              <div className="mb-2 text-xs font-medium text-grey-800">{v.label}</div>
               <div className="h-56">
                 <DriftChart series={d.series} meanKey={v.key} p95Key={v.p95_key} threshold={v.limit} color={v.color} unit={v.unit} />
               </div>

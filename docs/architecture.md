@@ -79,3 +79,10 @@ Language policy: findings say "associated with", "elevated failure risk" or "str
 ## Deployment
 
 The Railway project `silicopulse-backend` has two services: `silicopulse-backend` (root `backend/`, Procfile) and `silicopulse-frontend` (root `frontend/`, `NEXT_PUBLIC_API_URL` set to the backend URL). Deploy with `railway up --service <name>` from each folder. Secrets live only in the Railway variables.
+
+## Design system (frontend)
+
+- **Tokens:** CSS variables in `frontend/src/app/globals.css`, mirrored in `frontend/tailwind.config.ts`. The Tailwind colour palette is *replaced* (white, `grey-50…900`, `red-50…900`, `black`), so no other hue can render. Gradients (`bg-grad-page|sidebar|red|black|fail|login|banner`), shadows (`shadow-card|card-hover|cta|focus`) and the type scale (`text-2xs` 11.5 px minimum … `text-5xl` 48 px metrics) are tokens too.
+- **Charts:** `frontend/src/lib/utils.ts` holds `TOKENS`, `SERIES` (black, red-600, grey-600, grey-400, red-900, grey-300), `BAR` (grey with the top item in red), `DIVERGING` (red raises / black lowers), `seqColor` (white → red-100 → red-600 → red-900) and `riskStatus` (Low / Moderate / High / Critical; never green or amber).
+- **Typography:** Alegreya (self-hosted variable woff2 in `public/fonts`, OFL) for everything; JetBrains Mono (self-hosted) only for IDs, config keys, fingerprints, logs, diffs and code; Source Serif 4 as the fallback serif.
+- **Buttons:** `variant="primary"` is the red-gradient CTA, used exactly once per view; `default` is black; `secondary`/`outline` are white with a grey border; `ghost` has no fill.

@@ -4,6 +4,9 @@ import { Line } from "react-chartjs-2";
 import { INK, STATUS } from "@/lib/utils";
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Filler, Tooltip, Legend);
+ChartJS.defaults.font.family = "Alegreya, 'Source Serif 4', Georgia, serif";
+ChartJS.defaults.font.size = 12;
+ChartJS.defaults.color = "#52525B";
 
 /** One drifting random variable over time (mean + p95 band) against its risk threshold. Chart.js renders the dense series. */
 export function DriftChart({ series, meanKey, p95Key, threshold, color, unit }: { series: any[]; meanKey: string; p95Key: string; threshold: number; color: string; unit: string }) {
@@ -26,10 +29,10 @@ export function DriftChart({ series, meanKey, p95Key, threshold, color, unit }: 
         animation: false,
         interaction: { mode: "index", intersect: false },
         plugins: {
-          legend: { labels: { color: INK.secondary, boxWidth: 10, boxHeight: 10, font: { size: 11 } } },
+          legend: { labels: { color: INK.secondary, boxWidth: 10, boxHeight: 10, font: { size: 12 } } },
           tooltip: {
-            backgroundColor: "#ffffffee",
-            borderColor: "#334155",
+            backgroundColor: "#0E0E10",
+            borderColor: "#1C1C20",
             borderWidth: 1,
             titleColor: INK.primary,
             bodyColor: INK.secondary,
@@ -37,8 +40,8 @@ export function DriftChart({ series, meanKey, p95Key, threshold, color, unit }: 
           },
         },
         scales: {
-          x: { ticks: { color: INK.muted, maxTicksLimit: 8, font: { size: 10 } }, grid: { display: false }, border: { color: INK.axis } },
-          y: { ticks: { color: INK.muted, font: { size: 10 } }, grid: { color: INK.grid }, border: { display: false } },
+          x: { ticks: { color: INK.muted, maxTicksLimit: 8, font: { size: 12 } }, grid: { display: false }, border: { color: INK.axis } },
+          y: { ticks: { color: INK.muted, font: { size: 12 } }, grid: { color: INK.grid }, border: { display: false } },
         },
       }}
     />

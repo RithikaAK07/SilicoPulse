@@ -1,11 +1,11 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, Bot, Check, ChevronDown, Loader2, RotateCcw, Send, Sparkles, Square, Trash2, User, Wrench } from "lucide-react";
-import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { postStream, useActiveFilters } from "@/lib/api";
 import { useChat, type ChatChart, type ChatMessage } from "@/lib/store";
 import { useAuth } from "@/context/AuthContext";
-import { INK, SERIES, cn } from "@/lib/utils";
+import { BAR, DIVERGING, INK, SERIES, cn } from "@/lib/utils";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ChartTooltip, Markdown, axisProps } from "@/components/common";
@@ -156,14 +156,14 @@ export default function CopilotPage() {
   return (
     <div className="flex h-[calc(100vh-5.5rem)] flex-col">
       <Card className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <div className="flex items-center gap-3 border-b border-slate-200 px-5 py-3">
-          <div className="relative grid h-10 w-10 place-items-center rounded-full bg-gradient-to-br from-sky-500 to-indigo-600">
+        <div className="flex items-center gap-3 border-b border-grey-200 px-5 py-3">
+          <div className="relative grid h-10 w-10 place-items-center rounded-full bg-grad-black">
             <Bot className="h-5 w-5 text-white" />
-            <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-white bg-emerald-500" />
+            <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-white bg-red-600" />
           </div>
           <div className="flex-1">
-            <div className="text-sm font-semibold text-slate-900">SilicoPulse AI</div>
-            <div className="text-xs text-slate-500">Gemini-powered copilot · analyzes your live execution data with tools, SQL &amp; ML models</div>
+            <div className="text-sm font-semibold text-black">SilicoPulse AI</div>
+            <div className="text-xs text-grey-500">Gemini-powered copilot · analyzes your live execution data with tools, SQL &amp; ML models</div>
           </div>
           {messages.length > 0 && (
             <Button variant="ghost" size="sm" onClick={() => !busy && clear()} disabled={busy}>
@@ -172,20 +172,20 @@ export default function CopilotPage() {
           )}
         </div>
 
-        <div className="border-b border-slate-200 bg-white px-4 pt-3 sm:px-6">
+        <div className="border-b border-grey-200 bg-white px-4 pt-3 sm:px-6">
           <FilterBar compact />
-          <p className="-mt-1 pb-2 text-[11px] text-slate-500">
+          <p className="-mt-1 pb-2 text-2xs text-grey-500">
             {Object.keys(filters).length ? `Answers analyse only: ${Object.entries(filters).map(([k, v]) => `${k}=${v}`).join(", ")}` : "Answers analyse the whole active dataset. Pick filters to focus the copilot."}
           </p>
         </div>
-        <div className="flex-1 space-y-5 overflow-y-auto bg-slate-50/60 px-4 py-5 sm:px-6">
+        <div className="flex-1 space-y-5 overflow-y-auto bg-white px-4 py-5 sm:px-6">
           {!messages.length && (
             <div className="mx-auto max-w-2xl py-8 text-center">
-              <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-gradient-to-br from-sky-500 to-indigo-600 shadow-lg">
-                <Sparkles className="h-7 w-7 text-white" />
+              <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-grad-red shadow-cta">
+                <Sparkles className="h-6 w-6 text-white" strokeWidth={1.75} />
               </div>
-              <h2 className="mt-4 text-xl font-semibold text-slate-900">Hi{firstName ? ` ${firstName}` : ""}, what should we dig into?</h2>
-              <p className="mt-1 text-sm text-slate-500">
+              <h2 className="h1 mt-5 text-black">Hi{firstName ? ` ${firstName}` : ""}, what should we dig into?</h2>
+              <p className="mt-2 text-base text-grey-600">
                 Ask anything about the active dataset in plain English. I'll pick the right analyses, run them, and explain what I find.
               </p>
               <div className="mt-6 grid gap-2 text-left sm:grid-cols-2">
@@ -193,7 +193,7 @@ export default function CopilotPage() {
                   <button
                     key={s}
                     onClick={() => send(s)}
-                    className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 shadow-sm transition-colors hover:border-sky-300 hover:bg-sky-50"
+                    className="rounded-xl border border-grey-200 bg-white px-4 py-3 text-sm text-black shadow-card hover:-translate-y-px hover:border-red-600 hover:shadow-card-hover"
                   >
                     {s}
                   </button>
@@ -212,13 +212,13 @@ export default function CopilotPage() {
         </div>
 
         <form
-          className="border-t border-slate-200 bg-white p-3 sm:p-4"
+          className="border-t border-grey-200 bg-white p-3 sm:p-4"
           onSubmit={(e) => {
             e.preventDefault();
             send(input);
           }}
         >
-          <div className="flex items-end gap-2 rounded-2xl border border-slate-300 bg-white px-3 py-2 shadow-sm focus-within:border-sky-400 focus-within:ring-2 focus-within:ring-sky-100">
+          <div className="flex items-end gap-2 rounded-2xl border border-grey-300 bg-white px-3 py-2 shadow-card focus-within:border-red-600 focus-within:shadow-focus">
             <textarea
               ref={taRef}
               rows={1}
@@ -231,7 +231,7 @@ export default function CopilotPage() {
                 }
               }}
               placeholder="Message SilicoPulse AI…  (Enter to send, Shift+Enter for a new line)"
-              className="max-h-40 flex-1 resize-none bg-transparent py-1.5 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none"
+              className="max-h-40 flex-1 resize-none bg-transparent py-1.5 text-sm text-black placeholder:text-grey-500 focus:outline-none"
               aria-label="Message"
             />
             {busy ? (
@@ -239,12 +239,12 @@ export default function CopilotPage() {
                 <Square className="h-4 w-4 fill-current" />
               </Button>
             ) : (
-              <Button type="submit" size="icon" disabled={!input.trim()} aria-label="Send">
+              <Button type="submit" variant="primary" size="icon" className="rounded-full" disabled={!input.trim()} aria-label="Send">
                 <Send className="h-4 w-4" />
               </Button>
             )}
           </div>
-          <p className="mt-1.5 px-1 text-[11px] text-slate-400">AI answers are generated by Gemini from tool results on your data; verify critical decisions.</p>
+          <p className="mt-1.5 px-1 text-xs text-grey-500">AI answers are generated by Gemini from tool results on your data; verify critical decisions.</p>
         </form>
       </Card>
     </div>
@@ -254,9 +254,9 @@ export default function CopilotPage() {
 function UserBubble({ m }: { m: ChatMessage }) {
   return (
     <div className="flex justify-end gap-3">
-      <div className="max-w-[80%] whitespace-pre-wrap rounded-2xl rounded-tr-md bg-sky-600 px-4 py-2.5 text-sm text-white shadow-sm">{m.content}</div>
-      <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-slate-200">
-        <User className="h-4 w-4 text-slate-600" />
+      <div className="max-w-[80%] whitespace-pre-wrap rounded-2xl rounded-tr-md bg-grad-black px-4 py-2.5 text-base text-white shadow-card">{m.content}</div>
+      <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-grey-200">
+        <User className="h-4 w-4 text-grey-600" strokeWidth={1.75} />
       </div>
     </div>
   );
@@ -268,26 +268,26 @@ function AssistantBubble({ m, last, onSuggest, onRetry, busy }: { m: ChatMessage
   const thinking = m.streaming && !m.content;
   return (
     <div className="flex gap-3">
-      <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gradient-to-br from-sky-500 to-indigo-600">
+      <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-grad-black">
         <Bot className="h-4 w-4 text-white" />
       </div>
       <div className="min-w-0 max-w-4xl flex-1">
-        <div className="rounded-2xl rounded-tl-md border border-slate-200 bg-white px-4 py-3 shadow-sm">
+        <div className="rounded-2xl rounded-tl-md border border-l-2 border-grey-200 border-l-red-600 bg-white px-4 py-3 shadow-card">
           {steps.length > 0 && (
             <div className="mb-2">
-              <button onClick={() => setShowSteps(!showSteps)} className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-700">
+              <button onClick={() => setShowSteps(!showSteps)} className="flex items-center gap-1.5 text-xs text-grey-500 hover:text-grey-800">
                 <Wrench className="h-3.5 w-3.5" />
                 {m.streaming && steps.some((s) => !s.done) ? "Analyzing" : "Analysis"}: {steps.length} step{steps.length > 1 ? "s" : ""}
                 <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", (showSteps || thinking) && "rotate-180")} />
               </button>
               {(showSteps || thinking) && (
-                <ul className="mt-1.5 space-y-1 border-l-2 border-slate-100 pl-3">
+                <ul className="mt-1.5 space-y-1 border-l-2 border-grey-150 pl-3">
                   {steps.map((s, i) => (
-                    <li key={i} className="flex items-center gap-1.5 text-xs text-slate-600">
+                    <li key={i} className="flex items-center gap-1.5 text-xs text-grey-600">
                       {s.done ? (
-                        s.ok === false ? <AlertTriangle className="h-3.5 w-3.5 text-amber-500" /> : <Check className="h-3.5 w-3.5 text-emerald-600" />
+                        s.ok === false ? <AlertTriangle className="h-3.5 w-3.5 text-red-600" /> : <Check className="h-3.5 w-3.5 text-black" />
                       ) : (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin text-sky-600" />
+                        <Loader2 className="h-3.5 w-3.5 animate-spin text-black" />
                       )}
                       {s.label}
                     </li>
@@ -298,11 +298,11 @@ function AssistantBubble({ m, last, onSuggest, onRetry, busy }: { m: ChatMessage
           )}
 
           {thinking && !m.error && (
-            <div className="flex items-center gap-2 text-sm text-slate-500">
+            <div className="flex items-center gap-2 text-sm text-grey-500">
               <span className="flex gap-1">
-                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-sky-500 [animation-delay:-0.3s]" />
-                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-sky-500 [animation-delay:-0.15s]" />
-                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-sky-500" />
+                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-red-600 [animation-delay:-0.3s]" />
+                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-red-600 [animation-delay:-0.15s]" />
+                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-red-600" />
               </span>
               {m.status ?? "Thinking…"}
             </div>
@@ -311,7 +311,7 @@ function AssistantBubble({ m, last, onSuggest, onRetry, busy }: { m: ChatMessage
           {m.content && (
             <>
               <Markdown>{m.content}</Markdown>
-              {m.streaming && <span className="ml-0.5 inline-block h-4 w-1.5 animate-blink bg-sky-500 align-middle" />}
+              {m.streaming && <span className="ml-0.5 inline-block h-4 w-1.5 animate-blink bg-black align-middle" />}
             </>
           )}
 
@@ -320,7 +320,7 @@ function AssistantBubble({ m, last, onSuggest, onRetry, busy }: { m: ChatMessage
           ))}
 
           {m.error && (
-            <div className="mt-2 flex flex-wrap items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            <div className="mt-2 flex flex-wrap items-center gap-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900">
               <AlertTriangle className="h-4 w-4 shrink-0" />
               <span className="flex-1">
                 {m.error.message}
@@ -340,18 +340,18 @@ function AssistantBubble({ m, last, onSuggest, onRetry, busy }: { m: ChatMessage
         {!m.streaming && m.grounding && m.grounding.figures > 0 && (
           <div
             className={cn(
-              "mt-1.5 inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px]",
-              m.grounding.matched === m.grounding.figures ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-800",
+              "mt-1.5 inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-2xs",
+              m.grounding.matched === m.grounding.figures ? "border-grey-300 bg-grey-50 text-black" : "border-red-200 bg-red-50 text-red-900",
             )}
             title={m.grounding.unmatched.length ? `Not found in computed analytics: ${m.grounding.unmatched.join(", ")}` : "Every figure matches a value computed by the analytics layer"}
           >
             <Check className="h-3 w-3" /> Evidence check: {m.grounding.matched}/{m.grounding.figures} figures traced to computed analytics
-            {m.grounding.unmatched.length > 0 && <span className="text-amber-700"> · unverified: {m.grounding.unmatched.slice(0, 3).join(", ")}</span>}
+            {m.grounding.unmatched.length > 0 && <span className="text-red-900"> · unverified: {m.grounding.unmatched.slice(0, 3).join(", ")}</span>}
           </div>
         )}
 
         {!m.streaming && m.source && !m.error && (
-          <div className="mt-1 px-1 text-[10px] text-slate-400">
+          <div className="mt-1 px-1 text-2xs text-grey-500">
             {m.source}
             {steps.length ? ` · ${steps.length} tool call${steps.length > 1 ? "s" : ""}` : ""}
             {m.intents?.length ? ` · intents: ${m.intents.join(", ")}` : ""}
@@ -366,7 +366,7 @@ function AssistantBubble({ m, last, onSuggest, onRetry, busy }: { m: ChatMessage
                 key={q}
                 onClick={() => onSuggest(q)}
                 disabled={busy}
-                className="rounded-full border border-sky-200 bg-white px-3 py-1.5 text-xs text-sky-800 shadow-sm transition-colors hover:bg-sky-50 disabled:opacity-50"
+                className="rounded-full border border-grey-300 bg-white px-3 py-1.5 text-xs text-black shadow-sm transition-colors hover:bg-red-50 disabled:opacity-50"
               >
                 {q}
               </button>
@@ -386,15 +386,15 @@ function ChatChartView({ chart }: { chart: ChatChart }) {
   const multi = series.length > 1;
   const height = horizontal ? Math.max(180, chart.labels.length * 28 + 50) : 240;
   return (
-    <figure className="mt-3 rounded-xl border border-slate-200 p-3">
-      <figcaption className="mb-2 text-xs font-semibold text-slate-700">{chart.title}</figcaption>
+    <figure className="mt-3 rounded-xl border border-grey-200 p-3">
+      <figcaption className="mb-2 text-xs font-semibold text-grey-800">{chart.title}</figcaption>
       <div style={{ height }}>
         <ResponsiveContainer>
           {chart.chart_type === "line" ? (
             <LineChart data={data} margin={{ left: 0, right: 12, top: 4 }}>
               <CartesianGrid stroke={INK.grid} vertical={false} />
               <XAxis dataKey="label" {...axisProps} />
-              <YAxis {...axisProps} label={chart.y_label ? { value: chart.y_label, angle: -90, position: "insideLeft", fill: INK.muted, fontSize: 11 } : undefined} />
+              <YAxis {...axisProps} label={chart.y_label ? { value: chart.y_label, angle: -90, position: "insideLeft", fill: INK.muted, fontSize: 12 } : undefined} />
               <Tooltip content={<ChartTooltip />} />
               {multi && <Legend wrapperStyle={{ fontSize: 12 }} />}
               {series.map((s, i) => (
@@ -412,13 +412,19 @@ function ChatChartView({ chart }: { chart: ChatChart }) {
               ) : (
                 <>
                   <XAxis dataKey="label" {...axisProps} interval={0} angle={chart.labels.length > 6 ? -25 : 0} textAnchor={chart.labels.length > 6 ? "end" : "middle"} />
-                  <YAxis {...axisProps} label={chart.y_label ? { value: chart.y_label, angle: -90, position: "insideLeft", fill: INK.muted, fontSize: 11 } : undefined} />
+                  <YAxis {...axisProps} label={chart.y_label ? { value: chart.y_label, angle: -90, position: "insideLeft", fill: INK.muted, fontSize: 12 } : undefined} />
                 </>
               )}
-              <Tooltip content={<ChartTooltip />} cursor={{ fill: "#e2e8f0aa" }} />
+              <Tooltip content={<ChartTooltip />} cursor={{ fill: "rgba(14,14,16,0.04)" }} />
               {multi && <Legend wrapperStyle={{ fontSize: 12 }} />}
               {series.map((s, i) => (
-                <Bar key={s.name} isAnimationActive={false} dataKey={s.name} fill={SERIES[i]} radius={horizontal ? [0, 4, 4, 0] : [4, 4, 0, 0]} maxBarSize={44} />
+                <Bar key={s.name} isAnimationActive={false} dataKey={s.name} fill={multi ? SERIES[i] : BAR.base} radius={horizontal ? [0, 4, 4, 0] : [4, 4, 0, 0]} maxBarSize={44}>
+                  {!multi &&
+                    (s.values ?? []).map((v, j) => {
+                      const top = Math.max(...(s.values ?? []).filter((x) => typeof x === "number"));
+                      return <Cell key={j} fill={v < 0 ? DIVERGING.lowers : v === top ? BAR.highlight : BAR.base} />;
+                    })}
+                </Bar>
               ))}
             </BarChart>
           )}
@@ -432,21 +438,21 @@ function ChatChartView({ chart }: { chart: ChatChart }) {
 function EvidencePanel({ items }: { items: NonNullable<ChatMessage["evidence"]> }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="mt-2 rounded-xl border border-slate-200 bg-white">
-      <button onClick={() => setOpen(!open)} className="flex w-full items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-600 hover:text-slate-900" aria-expanded={open}>
+    <div className="mt-2 rounded-xl border border-grey-200 bg-white">
+      <button onClick={() => setOpen(!open)} className="flex w-full items-center gap-1.5 px-3 py-2 text-xs font-medium text-grey-600 hover:text-black" aria-expanded={open}>
         <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-180")} />
         Evidence ({items.length}) · computed by the analytics layer, not the LLM
       </button>
       {open && (
-        <div className="grid gap-2 border-t border-slate-100 p-3 md:grid-cols-2">
+        <div className="grid gap-2 border-t border-grey-150 p-3 md:grid-cols-2">
           {items.map((c, i) => (
-            <div key={i} className="rounded-lg border border-slate-100 bg-slate-50/60 p-2.5">
+            <div key={i} className="rounded-lg border border-grey-150 bg-grey-50/60 p-2.5">
               <div className="mb-1 flex flex-wrap items-center gap-1.5">
                 <SeverityBadge severity={c.severity} />
                 <StrengthBadge strength={c.evidence_strength} />
               </div>
-              <div className="text-xs font-semibold text-slate-900">{c.title}</div>
-              <div className="mb-1.5 text-[11px] text-slate-600">{c.finding}</div>
+              <div className="text-xs font-semibold text-black">{c.title}</div>
+              <div className="mb-1.5 text-2xs text-grey-600">{c.finding}</div>
               <EvidenceChips evidence={c.evidence} keys={Object.keys(c.evidence)} />
             </div>
           ))}
