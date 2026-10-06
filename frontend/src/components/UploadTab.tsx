@@ -1,10 +1,13 @@
 "use client";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   AlertTriangle, ArrowRight, CheckCircle2, Circle, Download, FileSpreadsheet, Loader2, Lock, RotateCcw, Search, Settings2, UploadCloud, X,
 } from "lucide-react";
-import { download, post, upload, type DatasetStatus } from "@/lib/api";
+import { api, download, post, upload, type DatasetStatus } from "@/lib/api";
+import {
+  ACCEPT, PreprocessPanel, PreprocessSteps, SUPPORTED_EXT, TelemetryResult, UNSUPPORTED_MSG, type TelemetryMapping, type UniversalPreview,
+} from "./UploadPreprocess";
 import { useAuth } from "@/context/AuthContext";
 import { SERIES, cn, num } from "@/lib/utils";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
@@ -45,7 +48,7 @@ interface Preview {
   mapping: Mapping;
   low_card_values: Record<string, string[]>;
 }
-type Stage = "idle" | "analyzing" | "mapping" | "ingesting" | "done" | "error";
+type Stage = "idle" | "analyzing" | "preview" | "mapping" | "ingesting" | "done" | "error";
 
 const FIELD_KEYS = ["outcome", "performance", "run_id", "timestamp", "seed", "error_signature", "log", "config_id", "environment", "hardware", "workload"] as const;
 const OPTIONAL_FIELDS: { key: (typeof FIELD_KEYS)[number]; label: string; hint: string }[] = [
@@ -68,7 +71,7 @@ const STEPS: { stage: Stage; label: string }[] = [
   { stage: "ingesting", label: "Ingest & retrain" },
   { stage: "done", label: "Active" },
 ];
-const ORDER: Stage[] = ["idle", "analyzing", "mapping", "ingesting", "done"];
+const ORDER: Stage[] = ["idle", "analyzing", "preview", "mapping", "ingesting", "done"];
 
 export function UploadTab() {
   const { can, dataset, refreshDataset } = useAuth();
@@ -83,24 +86,51 @@ export function UploadTab() {
   const [result, setResult] = useState<any>(null);
   const [downloading, setDownloading] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [uni, setUni] = useState<UniversalPreview | null>(null);
+  const [partId, setPartId] = useState<string>("main");
+  const [tmap, setTmap] = useState<TelemetryMapping | null>(null);
+  const [mode, setMode] = useState<"execution" | "telemetry">("execution");
+  const [telemetry, setTelemetry] = useState<any>(null);
+  const [clearing, setClearing] = useState(false);
+
+  useEffect(() => {
+    api<any>("/api/telemetry/status").then((t) => t?.active && setTelemetry(t)).catch(() => undefined);
+  }, []);
+
+  function selectPart(pv: UniversalPreview, id: string) {
+    const part = pv.parts.find((p) => p.part_id === id) ?? pv.parts[0];
+    setPartId(part.part_id);
+    setTmap(part.telemetry.available ? { timestamp: part.telemetry.mapping.timestamp, roles: { ...part.telemetry.mapping.roles } } : null);
+    const ex = part.execution.preview;
+    if (part.execution.available && ex) {
+      setPreview({ upload_id: pv.upload_id, filename: part.label, size_bytes: pv.size_bytes, rows: ex.rows, columns: ex.columns, mapping: ex.mapping, low_card_values: ex.low_card_values });
+      setMapping(ex.mapping);
+    } else {
+      setPreview(null);
+      setMapping(null);
+    }
+  }
 
   async function analyze(f: File) {
-    if (!f.name.toLowerCase().endsWith(".csv")) {
-      setError("Only .csv files are supported.");
+    setFile(f);
+    setUni(null);
+    setPreview(null);
+    setResult(null);
+    setMode("execution");
+    if (!SUPPORTED_EXT.some((x) => f.name.toLowerCase().endsWith(x))) {
+      setError(UNSUPPORTED_MSG);
       setStage("error");
       return;
     }
-    setFile(f);
     setError(null);
-    setResult(null);
     setStage("analyzing");
     try {
       const form = new FormData();
       form.append("file", f);
-      const p = await upload<Preview>("/api/upload-csv/preview", form);
-      setPreview(p);
-      setMapping(p.mapping);
-      setStage("mapping");
+      const pv = await upload<UniversalPreview>("/api/upload/preview", form);
+      setUni(pv);
+      selectPart(pv, pv.default_part ?? pv.parts[0]?.part_id ?? "main");
+      setStage("preview");
     } catch (e) {
       setError((e as Error).message);
       setStage("error");
@@ -110,12 +140,15 @@ export function UploadTab() {
   async function ingest() {
     if (!preview || !mapping) return;
     setStage("ingesting");
+    setMode("execution");
     setError(null);
     try {
       const form = new FormData();
       form.append("upload_id", preview.upload_id);
+      form.append("part_id", partId);
+      form.append("mode", "execution");
       form.append("mapping", JSON.stringify(mapping));
-      const res = await upload("/api/upload-csv", form);
+      const res = await upload("/api/upload/ingest", form);
       setResult(res);
       setStage("done");
       await refreshDataset();
@@ -123,6 +156,46 @@ export function UploadTab() {
       setError((e as Error).message);
       setStage("mapping");
     }
+  }
+
+  async function ingestTelemetry() {
+    if (!uni || !tmap) return;
+    setStage("ingesting");
+    setMode("telemetry");
+    setError(null);
+    try {
+      const form = new FormData();
+      form.append("upload_id", uni.upload_id);
+      form.append("part_id", partId);
+      form.append("mode", "telemetry");
+      form.append("mapping", JSON.stringify(tmap));
+      const res = await upload<any>("/api/upload/ingest", form);
+      setTelemetry(res.telemetry);
+      setResult(null);
+      setUni(null);
+      setStage("done");
+    } catch (e) {
+      setError((e as Error).message);
+      setStage("preview");
+    }
+  }
+
+  async function clearTelemetry() {
+    setClearing(true);
+    try {
+      await post("/api/telemetry/reset", {});
+      setTelemetry(null);
+    } finally {
+      setClearing(false);
+    }
+  }
+
+  function cancel() {
+    setStage("idle");
+    setUni(null);
+    setPreview(null);
+    setFile(null);
+    setError(null);
   }
 
   async function reset() {
@@ -157,7 +230,7 @@ export function UploadTab() {
           <div>
             <CardTitle>Bring your own execution logs</CardTitle>
             <CardDescription>
-              Upload a CSV with one row per execution. Columns are auto-classified into outcome, performance, configuration parameters, randomized variables and telemetry. You can adjust the mapping before ingesting.
+              Upload CSV, TXT, LOG, JSON, Excel (XLS/XLSX) or a ZIP of them. Files are parsed and columns auto-classified into outcome, performance, configuration parameters, randomized variables and telemetry; you can adjust the mapping before ingesting. Files without a pass/fail outcome (e.g. machine health telemetry) are ingested as telemetry, never with invented labels.
             </CardDescription>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -198,7 +271,7 @@ export function UploadTab() {
               <div
                 role="button"
                 tabIndex={0}
-                aria-label="Upload CSV file"
+                aria-label="Upload data file"
                 onClick={() => !busy && inputRef.current?.click()}
                 onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && !busy && inputRef.current?.click()}
                 onDragOver={(e) => {
@@ -219,12 +292,12 @@ export function UploadTab() {
                 )}
               >
                 <UploadCloud className={cn("h-10 w-10", drag ? "text-red-600" : "text-grey-600 group-hover:text-red-600")} strokeWidth={1.5} />
-                <div className="mt-3 text-base font-semibold text-black">{drag ? "Drop to analyze" : "Drag & drop a CSV here, or click to browse"}</div>
-                <div className="mt-1 text-xs text-grey-600">Needs a pass/fail column and at least {50} rows · up to 200 MB</div>
+                <div className="mt-3 text-base font-semibold text-black">{drag ? "Drop to analyze" : "Drag & drop a file here, or click to browse"}</div>
+                <div className="mt-1 text-xs text-grey-600">CSV · TXT · LOG · JSON · XLSX · XLS · ZIP · up to 200 MB · execution logs need a pass/fail column and at least {50} rows</div>
                 <input
                   ref={inputRef}
                   type="file"
-                  accept=".csv,text/csv"
+                  accept={ACCEPT}
                   className="hidden"
                   onChange={(e) => {
                     const f = e.target.files?.[0];
@@ -241,6 +314,7 @@ export function UploadTab() {
                       <FileSpreadsheet className="h-5 w-5 text-black" />
                       <span className="font-mono text-sm text-grey-800">{file.name}</span>
                       <span className="text-xs text-grey-500">{(file.size / 1024).toFixed(0)} KB</span>
+                      {uni && <span className="text-xs text-grey-500">· detected {uni.file_type.toUpperCase()}</span>}
                       {preview && <span className="text-xs text-grey-500">· {num(preview.rows)} rows · {preview.columns.length} columns</span>}
                       {stage === "mapping" && (
                         <Button size="sm" variant="outline" className="ml-auto" onClick={() => setStage("mapping")}>
@@ -249,8 +323,11 @@ export function UploadTab() {
                       )}
                     </div>
                   )}
-                  <StepIndicator stage={stage} />
-                  {error && (
+                  {(stage === "analyzing" || (stage === "error" && !uni)) && (
+                    <div className="mb-3"><PreprocessSteps busy={stage === "analyzing"} failed={stage === "error" ? error : null} /></div>
+                  )}
+                  {mode === "execution" && <StepIndicator stage={stage} />}
+                  {error && stage !== "preview" && (
                     <div className="mt-3 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
                       <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /> {error}
                     </div>
@@ -264,6 +341,26 @@ export function UploadTab() {
 
       {stage === "done" && result && <SuccessCard result={result} />}
 
+      {uni && canUpload && (stage === "preview" || (stage === "ingesting" && mode === "telemetry")) && (
+        <PreprocessPanel
+          pv={uni}
+          partId={partId}
+          setPartId={(id) => selectPart(uni, id)}
+          tmap={tmap}
+          setTmap={setTmap}
+          busy={stage === "ingesting"}
+          error={error}
+          onExecution={() => {
+            setError(null);
+            setStage("mapping");
+          }}
+          onTelemetry={ingestTelemetry}
+          onCancel={cancel}
+        />
+      )}
+
+      {telemetry?.active && <TelemetryResult status={telemetry} onClear={clearTelemetry} canClear={canUpload} clearing={clearing} />}
+
       {preview && mapping && (stage === "mapping" || stage === "ingesting") && (
         <MappingDialog
           preview={preview}
@@ -272,10 +369,8 @@ export function UploadTab() {
           busy={stage === "ingesting"}
           error={error}
           onCancel={() => {
-            setStage("idle");
-            setPreview(null);
-            setFile(null);
             setError(null);
+            setStage(uni ? "preview" : "idle");
           }}
           onConfirm={ingest}
         />

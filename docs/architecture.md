@@ -32,6 +32,22 @@ Recommendation (ml.recommend)    candidate search + training-data support + extr
 - **`cached(key, fn)`:** memoises per dataset version, with a per-key lock so concurrent requests never compute the same thing twice. Filtered analyses are cached per filter key (`evidence.filter_key`).
 - **Uploads:** `upload_handler.py` maps arbitrary CSVs onto the canonical schema (run_id, config_id, failed/outcome, throughput, seed, timestamp, context, error_signature, log_trace, telemetry). Missing canonical fields become neutral defaults and are listed in `meta.synthetic_columns`; the data-quality report marks them as **derived**. Missing values and log coverage are recorded before any filling. Label-leaking columns are dropped.
 
+## Upload preprocessing
+
+`app/preprocessor/` is a separate layer in front of the unchanged ingestion engine (`upload_handler.canonicalize` + `store.activate_upload`):
+
+| Module | Responsibility |
+|---|---|
+| `parsers.py` | Checks the extension against the magic bytes; parses delimited text (delimiter sniffing), logs (timestamp/level/key=value, continuation lines), JSON (arrays, nested records, JSON lines) and Excel (fastexcel). |
+| `zip_handler.py` | Reads ZIP members safely in memory (zip-slip, size, count, ratio, encryption and nesting guards). |
+| `mapper.py` | Gives each column an explainable role (name aliases, dtype, cardinality, value patterns, timestamp parse rate) and classifies the dataset type. |
+| `normalizer.py` | Parses timestamps, detects explicit units, and builds the canonical telemetry frame. |
+| `validator.py` | Produces user-facing validation messages (missing, non-numeric, invalid timestamps, duplicates, small datasets, ambiguity). |
+| `models.py` | Limits, `PREPROCESSOR_VERSION` and shared types. |
+
+Plain comma CSVs are re-read with the legacy `read_csv`, so the execution mapping is identical to `/api/upload-csv/preview`. Data without an
+outcome goes to `app/telemetry.py` (a separate parquet and metadata file with provenance) and never into the outcome-trained models.
+
 ## Evidence layer
 
 All statistics are computed from counts. The examples below are from the 10K benchmark and are computed at runtime, never hard-coded.

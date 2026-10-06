@@ -93,6 +93,32 @@ New endpoints, all **additive**: existing response formats are unchanged and onl
 
 **📥 Download Sample SanDisk Execution CSV** (`GET /api/download-sample-csv`) returns a 1,000-row log to test the pipeline. An upload needs ≥ 50 rows and ≥ 10 passing and 10 failing runs, and can be up to 200 MB.
 
+### Universal file preprocessing
+
+The upload tab accepts **CSV, TXT, LOG, JSON, XLSX, XLS and ZIP** (≤ 200 MB). Each file runs through `backend/app/preprocessor/`:
+file-type detection → parsing → field detection (role, confidence and reason per column) → mapping → validation. Only then is it handed to the
+existing ingestion pipeline. The UI shows each step, the detected data type, every column's suggested role and unit, the validation messages,
+and (for a ZIP) every member with its status.
+
+- `POST /api/upload/preview` returns the preview. `POST /api/upload/ingest` takes `upload_id`, `part_id`, a `mode` and a `mapping`.
+  - `mode=execution` uses the existing canonicalize-and-retrain path and the existing mapping dialog.
+  - `mode=telemetry` is described below.
+- The legacy `/api/upload-csv/preview` and `/api/upload-csv` endpoints are unchanged and still CSV-only.
+- **Telemetry-only data (no PASS/FAIL outcome)**, such as a machine-health CSV with `Timestamp, vibration_g, motor_temp_c, spindle_rpm`:
+  - It is accepted and classified (e.g. *Industrial telemetry*).
+  - No outcome is ever invented, and it can't be ingested as an execution log.
+  - It is stored as a separate telemetry dataset: per-channel statistics, robust-z anomalies, trends, sampling gaps and charts. The active execution dataset and models are not changed.
+  - Analyses that need an outcome, error signature or seed report *"Required field not available for this analysis."*
+  - `GET /api/telemetry/status` returns the telemetry dataset; `POST /api/telemetry/reset` removes it.
+- **Units** come only from explicit column-name suffixes (`_c`, `_rpm`, `_g`, `_kpa`, …); otherwise they show as *unit unknown*. The only conversion is an explicit °F → °C.
+- **ZIP safety:**
+  - Members are read in memory and never extracted.
+  - Path-traversal and absolute names are rejected (zip-slip).
+  - Limits apply to member count (100), member size (200 MB), total uncompressed size (500 MB) and compression ratio (200×).
+  - Encrypted and nested archives are not processed.
+  - Files with identical columns can be combined (tagged with `source_file`); incompatible files are kept separate and the reason is shown.
+- **Excel** is read with `fastexcel` (calamine, no macros or formulas executed). Each non-empty sheet becomes a selectable dataset.
+
 ## AI Copilot (evidence-grounded)
 
 `/copilot` is a Gemini function-calling agent (`app/copilot_agent.py`, `POST /api/copilot/chat`, which streams Server-Sent Events). For each question:
@@ -151,13 +177,14 @@ cd backend
 .venv\Scripts\python -m pytest
 ```
 
-The suite (42 tests) runs against an isolated temporary data folder with no network or Gemini calls. It covers:
+The suite (64 tests) runs against an isolated temporary data folder with no network or Gemini calls. It covers:
 
 - auth and roles
 - backward compatibility of every existing endpoint
 - the evidence layer, with checks that its numbers match a recomputation from the raw data
 - learned thresholds, seed and determinism policies, guardrails and model validation
 - upload, mapping, missing values and the leakage guard
+- the universal preprocessor: every file type, telemetry-only data, ZIP safety (zip-slip, bombs), and validation messages
 - the Copilot pipeline (intents, evidence retrieval, filter injection, grounding check, quota handling) against a mock Gemini server
 
 The frontend is checked with `npx tsc --noEmit` and `npm run build`.
