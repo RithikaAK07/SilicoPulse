@@ -2,12 +2,13 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Database, Download, Zap } from "lucide-react";
-import { api, post, useMeta } from "@/lib/api";
+import { api, post, useMeta, type ActiveDatasets } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { exportCSV, num } from "@/lib/utils";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ErrorState, PageHeader, Spinner } from "@/components/common";
+import { DataSourceSelector, ScenarioLab } from "@/components/scenario-lab";
 
 const PRESETS = [
   { label: "Quick demo", n_runs: 2_000, n_config: 100, n_random: 51 },
@@ -28,6 +29,19 @@ export default function GeneratorPage() {
       await refreshDataset();
     },
   });
+  // shared Active Dataset: Benchmark keeps the existing generator; an uploaded dataset opens the Scenario Lab
+  const active = useQuery({ queryKey: ["active-dataset"], queryFn: () => api<ActiveDatasets>("/api/active-dataset") });
+  const [switching, setSwitching] = useState<string | null>(null);
+  const switchTo = useMutation({
+    mutationFn: (dataset_id: string) => post("/api/active-dataset", { dataset_id }),
+    onMutate: (id) => setSwitching(id),
+    onSettled: () => setSwitching(null),
+    onSuccess: async () => {
+      await qc.invalidateQueries();
+      await refreshDataset();
+    },
+  });
+  const benchmarkMode = !active.data || active.data.active_id === "benchmark";
   if (meta.error) return <ErrorState error={meta.error} />;
   const m = meta.data;
   const cols = sample.data?.[0] ? Object.keys(sample.data[0]).slice(0, 28) : [];
@@ -38,6 +52,14 @@ export default function GeneratorPage() {
         title="Synthetic Log & Telemetry Dataset Generator"
         subtitle="Generate a fresh, realistic test campaign in one click: executions, configuration flags, randomized seeds and perturbations, telemetry, pass/fail outcomes and multi-line log traces. All models retrain automatically."
       />
+      {active.data && (
+        <DataSourceSelector data={active.data} busy={switching} canSwitch={can("upload")} onSelect={(id) => switchTo.mutate(id)} />
+      )}
+      {switchTo.error && <p className="-mt-3 mb-4 text-sm text-red-700">{(switchTo.error as Error).message}</p>}
+      {!benchmarkMode && active.data ? (
+        <ScenarioLab entry={active.data.active} canGenerate={can("generate")} />
+      ) : (
+      <>
       <div className="grid gap-6 xl:grid-cols-[1fr_1.4fr]">
         <Card>
           <CardHeader>
@@ -151,6 +173,8 @@ export default function GeneratorPage() {
           )}
         </CardContent>
       </Card>
+      </>
+      )}
     </>
   );
 }

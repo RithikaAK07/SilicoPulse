@@ -201,4 +201,6 @@ def telemetry_status(user: dict = Depends(get_current_user)):
 @router.post("/telemetry/reset")
 def telemetry_reset(user: dict = Depends(require_permission("upload"))):
     telemetry_store.clear()
+    from .active_dataset import telemetry_removed
+    telemetry_removed()  # if telemetry was the active dataset, fall back to the loaded execution dataset
     return {"active": False}

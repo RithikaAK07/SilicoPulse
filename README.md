@@ -129,6 +129,24 @@ and (for a ZIP) every member with its status.
   - Files with identical columns can be combined (tagged with `source_file`); incompatible files are kept separate and the reason is shown.
 - **Excel** is read with `fastexcel` (calamine, no macros or formulas executed). Each non-empty sheet becomes a selectable dataset.
 
+## Active dataset & Scenario Lab
+
+One **active dataset** is shared by the whole app: the synthetic **benchmark**, the **uploaded execution** dataset, or the **uploaded telemetry** dataset.
+- `GET /api/active-dataset` lists each one with its id, name, type, rows, columns, detected fields, field mapping and status.
+- `POST /api/active-dataset` switches between them (requires the `upload` permission).
+- Uploads are reused from CSV Data Upload, so nothing is uploaded twice.
+- Switching to the benchmark, or generating it, **keeps** the uploaded file; it used to delete it.
+- The selection is stored in `data/active_dataset.json` and survives restarts.
+
+The **Dataset Generator** page has a **Data source** selector:
+- **Benchmark:** the existing generator, unchanged.
+- **Uploaded dataset:** the detected structure plus a **Scenario Lab** whose scenarios are enabled only by fields that really exist:
+  - **Telemetry:** Vibration Spike, Temperature Rise, RPM Deviation. These modify only that channel and never add PASS/FAIL, seed, configuration or error fields.
+  - **Execution:** Configuration Failure, Seed Sensitivity, Resource/Performance Failure, Multi-factor Failure.
+- Scenarios are derived from a copy of the uploaded data and saved separately in `data/scenarios/`; the original is never modified. Each can be downloaded as CSV.
+
+While a telemetry dataset is active, the execution views show **Not available for this dataset**, and its analysis is on **Telemetry Health**.
+
 ## AI Copilot (evidence-grounded)
 
 `/copilot` is a Gemini function-calling agent (`app/copilot_agent.py`, `POST /api/copilot/chat`, which streams Server-Sent Events). For each question:
@@ -187,7 +205,7 @@ cd backend
 .venv\Scripts\python -m pytest
 ```
 
-The suite (106 tests) runs against an isolated temporary data folder with no network or Gemini calls. It covers:
+The suite (108 tests) runs against an isolated temporary data folder with no network or Gemini calls. It covers:
 
 - auth and roles
 - backward compatibility of every existing endpoint

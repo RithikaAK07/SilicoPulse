@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { Briefcase, Cpu, Database, FileSpreadsheet, LogOut, ShieldCheck, Zap } from "lucide-react";
+import { Activity, Briefcase, Cpu, Database, FileSpreadsheet, LogOut, ShieldCheck, Zap } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { num } from "@/lib/utils";
 
@@ -10,8 +10,9 @@ export function Header() {
   const { user, dataset, logout } = useAuth();
   if (!user) return null;
   const RoleIcon = ROLE_ICON[user.role];
-  const uploaded = dataset?.source === "uploaded";
-  const DatasetIcon = uploaded ? FileSpreadsheet : Database;
+  const telemetry = dataset?.active === "uploaded_telemetry";
+  const uploaded = dataset?.source === "uploaded" || telemetry;
+  const DatasetIcon = telemetry ? Activity : uploaded ? FileSpreadsheet : Database;
   return (
     <header className="mb-8 flex flex-wrap items-center justify-end gap-2 border-b border-grey-200 pb-4 pl-12 sm:pl-0">
       <Link href="/dashboard" className="mr-auto flex items-center gap-2.5" aria-label="SilicoPulse home">
@@ -24,13 +25,14 @@ export function Header() {
       {dataset && (
         <Link
           href="/upload"
-          title={uploaded ? `${dataset.filename} · ${num(dataset.rows)} rows` : `Synthetic benchmark · ${num(dataset.rows)} rows`}
+          title={telemetry ? `${dataset.active_name} · ${num(dataset.active_rows)} samples · ${dataset.active_channels} channels`
+            : uploaded ? `${dataset.filename} · ${num(dataset.rows)} rows` : `Synthetic benchmark · ${num(dataset.rows)} rows`}
           className="inline-flex max-w-[16rem] items-center gap-1.5 rounded-full border border-grey-300 bg-white px-3 py-1 text-xs font-semibold text-black hover:border-black"
         >
           <DatasetIcon className="h-3.5 w-3.5 shrink-0 text-grey-500" strokeWidth={1.75} />
           <span className="truncate">
-            {dataset.label}
-            {uploaded && dataset.filename ? ` · ${dataset.filename}` : ""}
+            {telemetry ? `Using Uploaded Telemetry · ${dataset.active_name}` : dataset.label}
+            {!telemetry && uploaded && dataset.filename ? ` · ${dataset.filename}` : ""}
           </span>
         </Link>
       )}

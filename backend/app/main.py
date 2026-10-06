@@ -10,7 +10,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from . import ai, analytics, ml
-from . import auth, copilot_agent, evidence, insights, universal_upload, upload_handler
+from . import active_dataset, auth, copilot_agent, evidence, insights, scenarios, universal_upload, upload_handler
 from .auth import get_current_user, require_permission
 from .config import CORS_ORIGINS, gemini_key
 from .store import store
@@ -236,4 +236,6 @@ async def copilot(req: CopilotReq):
 app.include_router(auth.router)
 app.include_router(upload_handler.router)
 app.include_router(universal_upload.router)
+app.include_router(active_dataset.router)
+app.include_router(scenarios.router)
 app.include_router(api)

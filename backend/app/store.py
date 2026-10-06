@@ -1,9 +1,13 @@
 """In-memory dataset + model state shared by all API routes.
 
-Exactly one dataset is active at a time: the synthetic benchmark or an uploaded CSV.
-Every analytics/ML/AI endpoint reads `store.df` / `store.sql(...)`, so activating an
-upload transparently re-points all of them. An active upload is persisted to disk and
+Exactly one EXECUTION dataset is loaded at a time: the synthetic benchmark or an uploaded
+execution file. Every analytics/ML/AI endpoint reads `store.df` / `store.sql(...)`, so
+activating an upload transparently re-points all of them. An upload is persisted to disk and
 restored on API restart.
+
+The app-wide "active dataset" (benchmark | uploaded execution | uploaded telemetry) is recorded
+in active_dataset.json. Switching to the benchmark keeps the uploaded file on disk, so the user
+can switch back without uploading it again (see app/active_dataset.py).
 """
 from __future__ import annotations
 
@@ -20,6 +24,24 @@ from .generator import generate_dataset
 
 UPLOAD_PATH = DATA_DIR / "uploaded.parquet"
 UPLOAD_META_PATH = DATA_DIR / "uploaded_meta.json"
+ACTIVE_PATH = DATA_DIR / "active_dataset.json"
+
+
+def read_active() -> dict:
+    """{"active": benchmark|uploaded_execution|uploaded_telemetry, "execution_source": benchmark|uploaded}.
+    Without the file (older installs) the previous rule applies: an uploaded file on disk is active."""
+    try:
+        a = json.loads(ACTIVE_PATH.read_text())
+        if a.get("active") in ("benchmark", "uploaded_execution", "uploaded_telemetry") and a.get("execution_source") in ("benchmark", "uploaded"):
+            return a
+    except Exception:
+        pass
+    up = UPLOAD_PATH.exists() and UPLOAD_META_PATH.exists()
+    return {"active": "uploaded_execution" if up else "benchmark", "execution_source": "uploaded" if up else "benchmark"}
+
+
+def write_active(active: str, execution_source: str) -> None:
+    ACTIVE_PATH.write_text(json.dumps({"active": active, "execution_source": execution_source}))
 
 
 class Store:
@@ -36,7 +58,7 @@ class Store:
         self.warm_status = {"state": "idle", "seconds": 0.0}
 
     def load_or_generate(self) -> None:
-        if UPLOAD_PATH.exists() and UPLOAD_META_PATH.exists():
+        if read_active()["execution_source"] == "uploaded" and UPLOAD_PATH.exists() and UPLOAD_META_PATH.exists():
             try:
                 self._activate(pl.read_parquet(UPLOAD_PATH), json.loads(UPLOAD_META_PATH.read_text()))
                 return
@@ -54,18 +76,27 @@ class Store:
         t0 = time.perf_counter()
         df = generate_dataset(n_runs, n_config, n_random, seed)
         gen_s = time.perf_counter() - t0
-        self._clear_upload()
         self._activate(df, json.loads(META_PATH.read_text()))
+        write_active("benchmark", "benchmark")  # the uploaded file is kept and stays selectable
         return {"generation_seconds": round(gen_s, 2), "training_seconds": round(self.train_seconds, 2)}
 
     def activate_upload(self, df: pl.DataFrame, meta: dict) -> None:
         self._activate(df, meta)  # train first: a CSV that fails training never replaces the active dataset
         df.write_parquet(UPLOAD_PATH)
         UPLOAD_META_PATH.write_text(json.dumps(meta, indent=2, default=str))
+        write_active("uploaded_execution", "uploaded")
 
     def reset_to_benchmark(self) -> None:
-        self._clear_upload()
+        """Make the benchmark active. The uploaded file is kept so it can be selected again."""
         self._load_benchmark()
+        write_active("benchmark", "benchmark")
+
+    def activate_saved_upload(self) -> None:
+        """Re-activate the uploaded execution dataset kept on disk (no re-upload needed)."""
+        if not (UPLOAD_PATH.exists() and UPLOAD_META_PATH.exists()):
+            raise FileNotFoundError("No uploaded execution dataset is available.")
+        self._activate(pl.read_parquet(UPLOAD_PATH), json.loads(UPLOAD_META_PATH.read_text()))
+        write_active("uploaded_execution", "uploaded")
 
     def _clear_upload(self) -> None:
         UPLOAD_PATH.unlink(missing_ok=True)
@@ -113,7 +144,25 @@ class Store:
             "leakage_dropped": m.get("leakage_dropped", []),
             "activated_at": m.get("generated_at"),
             "version": self.activated_at,
+            **self._active_info(),
         }
+
+    @staticmethod
+    def _active_info() -> dict:
+        """App-wide active dataset (see app/active_dataset.py); telemetry is described from its own store."""
+        active = read_active()["active"]
+        info = {"active": active}
+        if active == "uploaded_telemetry":
+            from .telemetry import telemetry_store  # local import: telemetry is optional at start-up
+
+            st = telemetry_store.status()
+            if st.get("active"):
+                m = st["meta"]
+                info.update(active_name=m.get("original_filename"), active_rows=m.get("rows"), active_type=m.get("dataset_type"),
+                            active_channels=len(m.get("channels", [])))
+            else:
+                info["active"] = "uploaded_execution" if read_active()["execution_source"] == "uploaded" else "benchmark"
+        return info
 
     def sql(self, query: str, params: list | None = None) -> list[dict]:
         """Run an OLAP query with DuckDB directly over the in-memory Polars frame (zero-copy via Arrow)."""

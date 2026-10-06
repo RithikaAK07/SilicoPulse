@@ -96,7 +96,33 @@ export interface DatasetStatus {
   leakage_dropped?: string[];
   activated_at: string;
   version: number;
+  /** app-wide active dataset (benchmark | uploaded execution | uploaded telemetry) */
+  active?: "benchmark" | "uploaded_execution" | "uploaded_telemetry";
+  active_name?: string;
+  active_rows?: number;
+  active_type?: string;
+  active_channels?: number;
 }
+
+export interface DatasetField { name: string; role: string; dtype?: string | null; unit?: string | null; derived?: boolean; missing?: number }
+export interface ActiveDatasetEntry {
+  dataset_id: "benchmark" | "upload-execution" | "upload-telemetry";
+  source: "benchmark" | "uploaded";
+  dataset_name: string;
+  dataset_type: string;
+  type_label: string;
+  pipeline: "execution" | "telemetry";
+  row_count: number;
+  column_count: number;
+  derived_columns: string[];
+  detected_fields: DatasetField[];
+  field_mapping: Record<string, string[]>;
+  channels?: { name: string; unit: string }[];
+  counts?: { config_params: number; random_vars: number; profiles: number | null; log_lines: number | null };
+  status: "active" | "available";
+  activated_at?: string | null;
+}
+export interface ActiveDatasets { active_id: ActiveDatasetEntry["dataset_id"]; active: ActiveDatasetEntry; datasets: ActiveDatasetEntry[] }
 
 // ---- types (subset of backend payloads used across views)
 export interface Meta {

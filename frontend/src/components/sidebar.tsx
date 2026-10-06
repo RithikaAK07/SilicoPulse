@@ -100,12 +100,23 @@ export function Sidebar() {
             <div className="space-y-1">
               <div className="mb-1.5 flex items-center justify-between border-b border-grey-200 pb-1.5">
                 <span>Dataset</span>
-                <span className="font-semibold text-black">{dataset?.source === "uploaded" ? "Uploaded CSV" : "Benchmark"}</span>
+                <span className="font-semibold text-black">
+                  {dataset?.active === "uploaded_telemetry" ? "Uploaded telemetry" : dataset?.source === "uploaded" ? "Uploaded CSV" : "Benchmark"}
+                </span>
               </div>
-              <Row k="Executions" v={num(meta.n_runs)} />
-              <Row k="Config params" v={String(meta.n_config_params)} />
-              <Row k="Random vars" v={String(meta.n_random_vars)} />
-              <Row k="Model AUC" v={meta.model.auc.toFixed(3)} />
+              {dataset?.active === "uploaded_telemetry" ? (
+                <>
+                  <Row k="Samples" v={num(dataset.active_rows)} />
+                  <Row k="Channels" v={String(dataset.active_channels ?? "–")} />
+                </>
+              ) : (
+                <>
+                  <Row k="Executions" v={num(meta.n_runs)} />
+                  <Row k="Config params" v={String(meta.n_config_params)} />
+                  <Row k="Random vars" v={String(meta.n_random_vars)} />
+                  <Row k="Model AUC" v={meta.model.auc.toFixed(3)} />
+                </>
+              )}
               <div className="flex justify-between">
                 <span>GenAI</span>
                 <span className={meta.ai.gemini_configured ? "font-semibold text-black" : "font-semibold text-red-700"}>

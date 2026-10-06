@@ -117,3 +117,15 @@ The Railway project `silicopulse-backend` has two services: `silicopulse-backend
 - a down-sampled series for charts.
 
 The **Telemetry Health** page (`frontend/src/app/telemetry/page.tsx`) renders it. Telemetry never touches `store`, the execution models or the execution views.
+
+### Active dataset & scenarios
+
+`app/active_dataset.py` builds one active-dataset view on top of the existing stores:
+- `store` holds the benchmark or the uploaded execution data.
+- `telemetry_store` holds the telemetry data.
+
+`data/active_dataset.json` records which one is active and which execution source is loaded. `Store.reset_to_benchmark()` and `Store.regenerate()` keep `uploaded.parquet`, and `Store.activate_saved_upload()` brings it back without re-uploading.
+
+`app/scenarios.py` derives scenarios from read-only copies, enabling each scenario only when its required fields exist, and writes the results to `data/scenarios/<id>.parquet` + `.json` (the 20 most recent are kept).
+
+The app shell swaps execution views for a "Not available for this dataset" panel while telemetry is the active dataset.
