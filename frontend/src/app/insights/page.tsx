@@ -33,7 +33,8 @@ export default function InsightsPage() {
               <button
                 key={c}
                 onClick={() => setCat(c)}
-                className={cn("rounded-full px-3 py-1 text-xs capitalize", cat === c ? "bg-black text-white" : "bg-white text-grey-600 ring-1 ring-grey-200 hover:bg-grey-50")}
+                aria-pressed={cat === c}
+                className={cn("sp-sel rounded-full px-3 py-1 text-xs capitalize", cat === c ? "text-white" : "bg-white text-grey-600 ring-1 ring-grey-200 hover:bg-grey-50")}
               >
                 {c}
               </button>

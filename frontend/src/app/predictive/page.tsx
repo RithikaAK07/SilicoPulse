@@ -131,7 +131,7 @@ function ParamControl({ spec, value, onChange }: { spec: Meta["key_params"][numb
           className={cn("flex h-10 w-full items-center justify-between rounded-[10px] border px-3 text-sm", on ? "border-grey-300 bg-grey-50 text-black" : "border-grey-300 bg-white text-grey-600 hover:border-grey-400")}
         >
           {on ? "Enabled" : "Disabled"}
-          <span className={cn("h-5 w-9 rounded-full p-0.5 transition-colors", on ? "bg-black" : "bg-grey-300")}>
+          <span className={cn("h-5 w-9 rounded-full p-0.5 transition-colors", on ? "sp-switch-on" : "bg-grey-300")}>
             <span className={cn("block h-4 w-4 rounded-full bg-white transition-transform", on && "translate-x-4")} />
           </span>
         </button>

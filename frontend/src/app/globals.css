@@ -270,3 +270,98 @@ table:not(.no-hover) tbody tr:hover {
 /* chart legends: text in ink (the swatch carries series identity), serif */
 .recharts-legend-item-text { color: var(--grey-600) !important; font-size: 12px; }
 .recharts-text { font-family: var(--font-serif); }
+
+/* ------------------------------------------------------------------ app shell: current / selected = red gradient
+   Scoped to the authenticated shell ([data-theme="silicopulse"], rendered by AppShell) so /login is untouched.
+   Text-bearing fills show only the #DC2626 -> #B91C1C half of the gradient (background-size 200%, anchored right),
+   so white text never sits on a stop lighter than #DC2626. */
+[data-theme="silicopulse"] {
+  --grad-red: linear-gradient(135deg, #f05252 0%, #dc2626 50%, #b91c1c 100%);
+  --grad-red-v: linear-gradient(180deg, #f05252 0%, #dc2626 55%, #b91c1c 100%);
+  --grad-red-h: linear-gradient(90deg, #f05252 0%, #dc2626 50%, #b91c1c 100%);
+  --shadow-red: 0 6px 16px -6px rgba(220, 38, 38, 0.45);
+  --shadow-red-low: 0 4px 12px -6px rgba(220, 38, 38, 0.35);
+}
+
+/* selectable item: gradient layer fades in (opacity 160ms) on any current/selected trigger */
+[data-theme="silicopulse"] .sp-sel {
+  position: relative;
+  isolation: isolate;
+  transition: color 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+[data-theme="silicopulse"] .sp-sel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: var(--grad-red) 100% 0 / 200% 100% no-repeat;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms ease;
+}
+[data-theme="silicopulse"] .sp-sel:is([aria-current="page"], [aria-current="true"], [aria-pressed="true"], [aria-selected="true"], [data-active="true"], [data-state="active"]) {
+  color: #fff;
+  border-color: transparent;
+  box-shadow: var(--shadow-red-low);
+}
+[data-theme="silicopulse"] .sp-sel:is([aria-current="page"], [aria-current="true"], [aria-pressed="true"], [aria-selected="true"], [data-active="true"], [data-state="active"])::before {
+  opacity: 1;
+}
+[data-theme="silicopulse"] .sp-sel:is([aria-current="page"], [aria-current="true"], [aria-pressed="true"], [aria-selected="true"], [data-active="true"]):hover {
+  box-shadow: var(--shadow-red);
+}
+[data-theme="silicopulse"] .sp-sel:is([aria-current="page"], [aria-current="true"], [aria-pressed="true"], [aria-selected="true"], [data-active="true"]) .sp-sel-icon {
+  color: #fff;
+}
+[data-theme="silicopulse"] .sp-sel:is([aria-current="page"], [aria-current="true"], [aria-pressed="true"], [aria-selected="true"], [data-active="true"]) .sp-sel-hint {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+/* switch track (no text inside) */
+[data-theme="silicopulse"] .sp-switch-on {
+  background: var(--grad-red);
+  box-shadow: var(--shadow-red-low);
+}
+
+/* page progress bar */
+[data-theme="silicopulse"] .sp-progress {
+  background: var(--grad-red-h);
+}
+
+/* range sliders: gradient fill, white thumb with a 3px red-gradient ring (same 16px / 14px thumb size) */
+[data-theme="silicopulse"] .range::-webkit-slider-runnable-track {
+  background: var(--grad-red-h) 0 0 / var(--fill, 0%) 100% no-repeat, var(--grey-200);
+}
+[data-theme="silicopulse"] .range::-moz-range-progress {
+  background: var(--grad-red-h);
+}
+[data-theme="silicopulse"] .range::-webkit-slider-thumb {
+  box-sizing: border-box;
+  border: 3px solid transparent;
+  background: linear-gradient(#fff, #fff) padding-box, var(--grad-red) border-box;
+  box-shadow: var(--shadow-red);
+}
+[data-theme="silicopulse"] .range::-moz-range-thumb {
+  box-sizing: border-box;
+  width: 14px;
+  height: 14px;
+  border: 3px solid transparent;
+  background: linear-gradient(#fff, #fff) padding-box, var(--grad-red) border-box;
+  box-shadow: var(--shadow-red);
+}
+[data-theme="silicopulse"] .range:active::-webkit-slider-thumb,
+[data-theme="silicopulse"] .range:focus-visible::-webkit-slider-thumb {
+  box-shadow: var(--shadow-red), var(--focus-ring);
+}
+[data-theme="silicopulse"] .range:active::-moz-range-thumb,
+[data-theme="silicopulse"] .range:focus-visible::-moz-range-thumb {
+  box-shadow: var(--shadow-red), var(--focus-ring);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-theme="silicopulse"] .sp-sel,
+  [data-theme="silicopulse"] .sp-sel::before {
+    transition: none;
+  }
+}

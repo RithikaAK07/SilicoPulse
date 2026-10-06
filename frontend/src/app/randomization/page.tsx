@@ -120,7 +120,8 @@ function Content({ data }: { data: any }) {
                 <button
                   key={k}
                   onClick={() => setPv(k)}
-                  className={`rounded-md px-2 py-1 text-2xs ${pv === k ? "bg-grad-black text-white" : "text-grey-600 hover:bg-grey-100"}`}
+                  aria-pressed={pv === k}
+                  className={`sp-sel rounded-md px-2 py-1 text-2xs ${pv === k ? "text-white" : "text-grey-600 hover:bg-grey-100"}`}
                 >
                   {pretty(k)}
                 </button>

@@ -68,17 +68,17 @@ export function Sidebar() {
                 key={href}
                 href={href}
                 title={label}
+                aria-current={active ? "page" : undefined}
                 onClick={() => setOpen(false)}
                 className={cn(
-                  "group relative flex items-center gap-3 rounded-[10px] px-3 py-2.5 text-sm",
+                  "sp-sel group relative flex items-center gap-3 rounded-[10px] px-3 py-2.5 text-sm",
                   !open && "sm:justify-center lg:justify-start",
-                  active ? "bg-grad-black text-white shadow-card" : "text-grey-600 hover:bg-black/[0.04] hover:text-black",
+                  active ? "text-white" : "text-grey-600 hover:bg-black/[0.04] hover:text-black",
                 )}
               >
-                {active && <span className="absolute inset-y-2 left-0 w-[3px] rounded-r bg-red-600" aria-hidden />}
-                <Icon className={cn("h-4 w-4 shrink-0", active ? "text-red-400" : "text-grey-500 group-hover:text-black")} strokeWidth={1.75} />
+                <Icon className={cn("sp-sel-icon h-4 w-4 shrink-0", active ? "text-white" : "text-grey-500 group-hover:text-black")} strokeWidth={1.75} />
                 <span className={cn("flex-1", text)}>{label}</span>
-                <span className={cn("text-2xs", active ? "text-grey-300" : "text-grey-500", text)}>{q}</span>
+                <span className={cn("sp-sel-hint text-2xs", active ? "text-white/85" : "text-grey-500", text)}>{q}</span>
               </Link>
             );
           })}

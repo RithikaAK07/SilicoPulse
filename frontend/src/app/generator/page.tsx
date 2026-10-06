@@ -55,7 +55,7 @@ export default function GeneratorPage() {
                   key={p.label}
                   aria-pressed={form.n_runs === p.n_runs && form.n_config === p.n_config && form.n_random === p.n_random}
                   onClick={() => setForm({ ...form, n_runs: p.n_runs, n_config: p.n_config, n_random: p.n_random })}
-                  className="h-8 rounded-full border border-grey-300 bg-white px-3.5 text-xs font-semibold text-black hover:border-black aria-pressed:border-black aria-pressed:bg-grad-black aria-pressed:text-white"
+                  className="sp-sel h-8 rounded-full border border-grey-300 bg-white px-3.5 text-xs font-semibold text-black hover:border-grey-400 aria-pressed:bg-transparent"
                 >
                   {p.label}
                 </button>

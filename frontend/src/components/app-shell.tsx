@@ -14,7 +14,7 @@ function ProgressBar() {
   const busy = useIsFetching() + useIsMutating() > 0;
   return (
     <div className="pointer-events-none fixed inset-x-0 top-0 z-[60] h-0.5 overflow-hidden" aria-hidden>
-      {busy && <div className="h-full w-1/3 animate-progress bg-red-600" />}
+      {busy && <div className="sp-progress h-full w-1/3 animate-progress" />}
     </div>
   );
 }
@@ -39,7 +39,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     );
   }
   return (
-    <>
+    <div data-theme="silicopulse" className="contents">
       <ProgressBar />
       <Sidebar />
       <main className="min-h-screen px-4 pb-16 pt-3 sm:ml-[72px] sm:px-6 sm:pt-5 lg:ml-64 lg:px-8">
@@ -48,6 +48,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           {children}
         </div>
       </main>
-    </>
+    </div>
   );
 }
