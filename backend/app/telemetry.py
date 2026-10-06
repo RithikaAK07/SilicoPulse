@@ -9,15 +9,18 @@ dataset-type registry (preprocessor/dataset_types.py) lists what each pipeline p
 from __future__ import annotations
 
 import json
+import logging
 import threading
 from datetime import datetime, timezone
 
 import numpy as np
 import polars as pl
 
+from . import persistence
 from .config import DATA_DIR
 from .preprocessor.dataset_types import describe
 
+log = logging.getLogger("silicopulse.telemetry")
 TELEMETRY_PATH = DATA_DIR / "telemetry.parquet"
 TELEMETRY_META_PATH = DATA_DIR / "telemetry_meta.json"
 MAX_POINTS = 600
@@ -181,19 +184,37 @@ class TelemetryStore:
             try:
                 self.frame = pl.read_parquet(TELEMETRY_PATH)
                 self.meta = json.loads(TELEMETRY_META_PATH.read_text())
-            except Exception:
+            except Exception as e:  # unreadable: keep the files aside (never delete user data)
+                log.exception("telemetry dataset could not be loaded")
                 self.frame, self.meta = None, None
+                for path in (TELEMETRY_PATH, TELEMETRY_META_PATH):
+                    persistence.quarantine(path, f"unreadable telemetry dataset ({type(e).__name__})")
 
     def activate(self, frame: pl.DataFrame, meta: dict) -> dict:
         meta = {**meta, "activated_at": datetime.now(timezone.utc).isoformat()}
         summary = summarize(frame, meta)
         with self.lock:
-            tmp = TELEMETRY_PATH.with_suffix(".tmp")
-            frame.write_parquet(tmp)
-            tmp.replace(TELEMETRY_PATH)
-            TELEMETRY_META_PATH.write_text(json.dumps(meta, default=str))
+            persistence.atomic_write_parquet(frame, TELEMETRY_PATH)
+            persistence.atomic_write_text(TELEMETRY_META_PATH, json.dumps(meta, default=str))
             self.frame, self.meta, self._summary = frame, meta, summary
+        self._register()
         return self.status()
+
+    @staticmethod
+    def _register() -> None:
+        from .active_dataset import register_telemetry  # local import: active_dataset imports this module
+
+        try:
+            register_telemetry()
+        except Exception:
+            log.exception("could not register the telemetry dataset metadata")
+
+    def info(self) -> dict:
+        """Metadata only (no statistics): for registry/selection logic that must stay lightweight."""
+        with self.lock:
+            if self.frame is None or self.meta is None:
+                return {"active": False}
+            return {"active": True, "meta": self.meta}
 
     def status(self) -> dict:
         with self.lock:

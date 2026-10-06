@@ -10,7 +10,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from . import ai, analytics, ml
-from . import active_dataset, auth, copilot_agent, evidence, insights, scenarios, universal_upload, upload_handler
+from . import active_dataset, auth, copilot_agent, evidence, insights, persistence, scenarios, universal_upload, upload_handler
 from .auth import get_current_user, require_permission
 from .config import CORS_ORIGINS, gemini_key
 from .store import store
@@ -19,6 +19,7 @@ from .store import store
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     store.load_or_generate()
+    store.sync_registry()
     yield
 
 
@@ -231,6 +232,13 @@ async def copilot_chat(req: ChatReq):
 @api.post("/api/copilot")
 async def copilot(req: CopilotReq):
     return await ai.copilot(req.query)
+
+
+@app.exception_handler(persistence.StorageError)
+async def storage_error(_request, exc: persistence.StorageError):
+    from fastapi.responses import JSONResponse
+
+    return JSONResponse(status_code=503, content={"detail": str(exc)})
 
 
 app.include_router(auth.router)

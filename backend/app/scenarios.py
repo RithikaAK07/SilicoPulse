@@ -28,6 +28,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
+from . import persistence
 from .active_dataset import BENCHMARK, UPLOAD_EXEC, UPLOAD_TEL, available
 from .auth import get_current_user, require_permission
 from .config import DATA_DIR
@@ -140,7 +141,7 @@ def _windows(n: int, count: int, length: int, rng: np.random.Generator) -> list[
 
 def _telemetry_scenario(sid: str, lvl: int, seed: int) -> tuple[pl.DataFrame, dict]:
     frame = pl.read_parquet(TELEMETRY_PATH)  # read-only copy of the stored telemetry dataset
-    meta = telemetry_store.status()["meta"]
+    meta = telemetry_store.info()["meta"]
     rng = np.random.default_rng(seed)
     kind = next(k for s, _, k, _ in TELEMETRY_SCENARIOS if s == sid)
     targets = [c for c in meta["channels"] if _channel_kind(c["original"], c.get("unit")) == kind]
@@ -237,6 +238,11 @@ def _execution_scenario(sid: str, lvl: int, seed: int) -> tuple[pl.DataFrame, di
 
 
 def _prune() -> None:
+    """Keep the newest MAX_KEEP scenarios (registry first, then any older files without a record)."""
+    for old in persistence.scenarios_to_prune(MAX_KEEP):
+        (SCENARIO_DIR / f"{old['scenario_id']}.parquet").unlink(missing_ok=True)
+        (SCENARIO_DIR / f"{old['scenario_id']}.json").unlink(missing_ok=True)
+        persistence.delete_scenario(old["scenario_id"])
     files = sorted(SCENARIO_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
     for old in files[MAX_KEEP:]:
         old.unlink(missing_ok=True)
@@ -263,8 +269,9 @@ def generate(dataset_id: str, scenario: str, intensity: str, seed: int) -> dict:
             "rows": len(frame), "columns": frame.columns, "column_count": frame.width, "modified_fields": sc["fields"], "detail": detail,
             "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"), "seconds": round(time.perf_counter() - t0, 3),
             "note": "Synthetic scenario derived from the uploaded dataset; the original dataset is unchanged."}
-    frame.write_parquet(SCENARIO_DIR / f"{sid}.parquet")
-    (SCENARIO_DIR / f"{sid}.json").write_text(json.dumps(info, default=str))
+    persistence.atomic_write_parquet(frame, SCENARIO_DIR / f"{sid}.parquet")
+    persistence.atomic_write_text(SCENARIO_DIR / f"{sid}.json", json.dumps(info, default=str))
+    persistence.add_scenario(info, SCENARIO_DIR / f"{sid}.parquet")
     _prune()
     preview = frame.drop([c for c in ("log_trace",) if c in frame.columns]).head(50)
     return {**info, "preview": json.loads(preview.write_json())}
@@ -290,10 +297,14 @@ async def post_generate(req: ScenarioReq, user: dict = Depends(require_permissio
 
 @router.get("/scenarios/{scenario_id}/download")
 def download(scenario_id: str, user: dict = Depends(get_current_user)):
-    if not re.fullmatch(r"[0-9a-f]{32}", scenario_id) or not (SCENARIO_DIR / f"{scenario_id}.parquet").exists():
-        raise HTTPException(404, "Scenario not found.")
-    frame = pl.read_parquet(SCENARIO_DIR / f"{scenario_id}.parquet")
-    info = json.loads((SCENARIO_DIR / f"{scenario_id}.json").read_text())
+    if not re.fullmatch(r"[0-9a-f]{32}", scenario_id):
+        raise HTTPException(404, "Scenario not found.")  # same status as before the registry
+    rec = persistence.get_scenario(scenario_id)
+    path = SCENARIO_DIR / f"{scenario_id}.parquet"
+    if not path.exists():
+        raise HTTPException(404, "Scenario not found." if rec is None else "The scenario's data file is missing.")
+    frame = pl.read_parquet(path)
+    info = rec["info"] if rec else json.loads((SCENARIO_DIR / f"{scenario_id}.json").read_text())
     buf = io.BytesIO()
     frame.write_csv(buf)
     name = re.sub(r"[^A-Za-z0-9._-]+", "_", f"{info['base_dataset']['dataset_name'].rsplit('.', 1)[0]}_{info['scenario']}_{info['intensity']}.csv")

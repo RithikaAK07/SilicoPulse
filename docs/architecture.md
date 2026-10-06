@@ -129,3 +129,17 @@ The **Telemetry Health** page (`frontend/src/app/telemetry/page.tsx`) renders it
 `app/scenarios.py` derives scenarios from read-only copies, enabling each scenario only when its required fields exist, and writes the results to `data/scenarios/<id>.parquet` + `.json` (the 20 most recent are kept).
 
 The app shell swaps execution views for a "Not available for this dataset" panel while telemetry is the active dataset.
+
+### Persistence (`app/persistence.py`)
+
+- **Registry:** a SQLite file (`data/silicopulse.db`, WAL mode, one short-lived connection per call, schema version in `PRAGMA user_version`) holds only metadata:
+  - `datasets`: id, name, type, pipeline, rows, columns, file path, status (`available` / `missing` / `error`) and the full description served by `/api/active-dataset`;
+  - `app_state`: the active selection;
+  - `scenarios`: scenario metadata and file path.
+- **Datasets** stay in parquet files written atomically.
+- **Store interface:** `store.py`'s public interface is unchanged: `df`, `meta`, `bundle`, `cache`, `sql`, `cached`, `dataset_status`, `activate_upload`, `reset_to_benchmark`, `regenerate`, `activate_saved_upload`, `read_active` and `write_active`.
+  - Internally the selection is stored in the registry and mirrored atomically to `active_dataset.json` for recovery.
+  - `switch_lock` serializes dataset changes.
+  - Unreadable files are quarantined rather than deleted.
+- **Startup** (`lifespan`): `store.load_or_generate()` opens or migrates the registry and loads the persisted execution dataset. `store.sync_registry()` then registers every dataset on disk and marks records whose file disappeared as `missing`.
+- **Metadata reads stay lightweight:** a parquet schema plus row count, or the telemetry metadata. They never load a dataset or compute telemetry statistics.

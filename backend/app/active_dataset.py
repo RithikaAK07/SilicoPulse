@@ -10,21 +10,30 @@ POST /api/active-dataset   -> make one of them active (same permission as "rever
 
 Activating telemetry leaves the execution store loaded (the models need a dataset) but the
 execution views then report that their analyses are not available for the active dataset.
+
+Dataset metadata is read from the persistent registry (app/persistence.py), which is updated
+whenever a dataset is activated, uploaded, regenerated or removed. Records are rebuilt from the
+data files when missing, and a dataset whose file disappeared is reported "missing" instead of
+being offered. If the registry is unavailable the descriptions are computed from the files.
 """
 from __future__ import annotations
 
 import json
+import logging
 
 import polars as pl
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
+from . import persistence
 from .auth import get_current_user, require_permission
 from .config import META_PATH, RUNS_PATH
 from .preprocessor.dataset_types import describe
 from .store import UPLOAD_META_PATH, UPLOAD_PATH, read_active, store, write_active
-from .telemetry import telemetry_store
+from .telemetry import TELEMETRY_PATH, telemetry_store
+
+log = logging.getLogger("silicopulse.active_dataset")
 
 router = APIRouter(prefix="/api", tags=["active-dataset"])
 
@@ -76,7 +85,7 @@ def _execution_entry(dataset_id: str, df: pl.DataFrame | None, path, meta: dict)
 
 
 def _telemetry_entry() -> dict | None:
-    st = telemetry_store.status()
+    st = telemetry_store.info()
     if not st.get("active"):
         return None
     m = st["meta"]
@@ -93,7 +102,76 @@ def _telemetry_entry() -> dict | None:
     }
 
 
+# ------------------------------------------------------------------------------- registry
+def register_execution(dataset_id: str, df: pl.DataFrame | None, path, meta: dict) -> None:
+    """Persist the description of an execution dataset (lightweight: schema + row count)."""
+    persistence.upsert_dataset(_execution_entry(dataset_id, df, None if df is not None else path, meta), path)
+
+
+def register_telemetry() -> None:
+    """Persist (or remove) the description of the telemetry dataset."""
+    entry = _telemetry_entry()
+    if entry:
+        persistence.upsert_dataset(entry, TELEMETRY_PATH)
+    else:
+        persistence.delete_dataset(UPLOAD_TEL)
+
+
+def _loaded(dataset_id: str) -> pl.DataFrame | None:
+    """The in-memory frame when that dataset is the one loaded (avoids re-reading its file)."""
+    return store.df if (store.meta.get("source") == "uploaded") == (dataset_id == UPLOAD_EXEC) else None
+
+
+def _registry_entries() -> dict[str, dict]:
+    """Dataset descriptions from the registry, re-synchronised with the files on disk."""
+    recs = {r["entry"]["dataset_id"]: r for r in persistence.list_datasets()}
+    for did, data, metap in ((BENCHMARK, RUNS_PATH, META_PATH), (UPLOAD_EXEC, UPLOAD_PATH, UPLOAD_META_PATH)):
+        exists = data.exists() and metap.exists()
+        rec = recs.get(did)
+        if exists and (rec is None or rec["status"] == "missing"):
+            register_execution(did, _loaded(did), data, json.loads(metap.read_text()))
+            recs[did] = persistence.get_dataset(did)
+        elif not exists and rec is not None and rec["status"] == "available":
+            persistence.mark_dataset(did, "missing", f"{data.name} not found")
+            rec["status"] = "missing"
+    tel_active = bool(telemetry_store.info().get("active"))
+    if tel_active and UPLOAD_TEL not in recs:
+        register_telemetry()
+        recs[UPLOAD_TEL] = persistence.get_dataset(UPLOAD_TEL)
+    elif not tel_active and UPLOAD_TEL in recs:
+        persistence.delete_dataset(UPLOAD_TEL)
+        recs.pop(UPLOAD_TEL)
+    return {did: r["entry"] for did, r in recs.items() if r and r["status"] == "available"}
+
+
+def sync_registry() -> None:
+    """Startup migration: register every dataset present on disk (pre-registry installs, rebuilt registry)."""
+    _registry_entries()
+
+
+def _assemble(entries: dict[str, dict]) -> dict:
+    act = read_active()
+    datasets = [dict(entries[d]) for d in (BENCHMARK, UPLOAD_EXEC, UPLOAD_TEL) if d in entries]
+    active_id = next((k for k, v in _ACTIVE_KEY.items() if v == act["active"]), BENCHMARK)
+    if not any(d["dataset_id"] == active_id for d in datasets):  # stale selection (e.g. telemetry removed)
+        active_id = UPLOAD_EXEC if act["execution_source"] == "uploaded" and any(d["dataset_id"] == UPLOAD_EXEC for d in datasets) else BENCHMARK
+    for d in datasets:
+        d["status"] = "active" if d["dataset_id"] == active_id else "available"
+    return {"active_id": active_id, "active": next(d for d in datasets if d["dataset_id"] == active_id), "datasets": datasets}
+
+
 def available() -> dict:
+    try:
+        entries = _registry_entries()
+        if BENCHMARK in entries or UPLOAD_EXEC in entries:
+            return _assemble(entries)
+    except persistence.StorageError as e:
+        log.warning("registry unavailable, describing datasets from the files: %s", e)
+    return _available_live()
+
+
+def _available_live() -> dict:
+    """Pre-registry implementation (used only if the registry cannot be read)."""
     act = read_active()
     loaded_upload = store.meta.get("source") == "uploaded"
     datasets = []
@@ -128,7 +206,7 @@ def activate(dataset_id: str) -> None:
             store.activate_saved_upload()
         write_active("uploaded_execution", "uploaded")
     elif dataset_id == UPLOAD_TEL:
-        if not telemetry_store.status().get("active"):
+        if not telemetry_store.info().get("active"):
             raise HTTPException(404, "No uploaded telemetry dataset available.")
         write_active("uploaded_telemetry", act["execution_source"])  # execution store unchanged
     else:
@@ -137,6 +215,10 @@ def activate(dataset_id: str) -> None:
 
 def telemetry_removed() -> None:
     """Called when the telemetry dataset is deleted: fall back to the loaded execution dataset."""
+    try:
+        persistence.delete_dataset(UPLOAD_TEL)
+    except persistence.StorageError:
+        log.warning("could not remove the telemetry record from the registry")
     act = read_active()
     if act["active"] == "uploaded_telemetry":
         write_active("uploaded_execution" if act["execution_source"] == "uploaded" else "benchmark", act["execution_source"])

@@ -147,6 +147,25 @@ The **Dataset Generator** page has a **Data source** selector:
 
 While a telemetry dataset is active, the execution views show **Not available for this dataset**, and its analysis is on **Telemetry Health**.
 
+## Storage
+
+| What | Where | Notes |
+|---|---|---|
+| Benchmark rows + metadata | `data/runs.parquet`, `meta.json` | generated once; reused on every start |
+| Uploaded execution dataset | `data/uploaded.parquet`, `uploaded_meta.json` | kept when the benchmark is selected or regenerated |
+| Telemetry dataset | `data/telemetry.parquet`, `telemetry_meta.json` | |
+| Scenarios | `data/scenarios/<id>.parquet` + `.json` | newest 20 kept |
+| Metadata registry | `data/silicopulse.db` (SQLite, stdlib `sqlite3`) | datasets, active selection, scenario index |
+| Models, analytics cache | memory | derived; rebuilt from the files at startup |
+
+- Large data never goes into the database.
+- Every file is written atomically (temp file, fsync, rename).
+- A file that can't be loaded is moved aside as `*.corrupt-<timestamp>` and reported, never deleted.
+- A corrupt or missing registry is rebuilt from the files at startup.
+- Installs from before the registry are migrated automatically, keeping the active selection.
+- Dataset switches, uploads and regenerations are serialized.
+- A registry write that fails returns HTTP 503 with a clear message.
+
 ## AI Copilot (evidence-grounded)
 
 `/copilot` is a Gemini function-calling agent (`app/copilot_agent.py`, `POST /api/copilot/chat`, which streams Server-Sent Events). For each question:
@@ -205,7 +224,7 @@ cd backend
 .venv\Scripts\python -m pytest
 ```
 
-The suite (108 tests) runs against an isolated temporary data folder with no network or Gemini calls. It covers:
+The suite (121 tests) runs against an isolated temporary data folder with no network or Gemini calls. It covers:
 
 - auth and roles
 - backward compatibility of every existing endpoint
@@ -233,6 +252,18 @@ cd frontend; railway up --service silicopulse-frontend --detach
 ```
 
 Health check: `GET /api/health`, which also reports whether the background pre-computation has finished.
+
+**Persistence on Railway:** the backend writes everything to `SILICOPULSE_DATA_DIR` (default `backend/data`):
+- uploads, telemetry and scenarios;
+- the benchmark files;
+- the SQLite registry;
+- the JWT secret.
+
+The production environment currently has **no Railway volume** (`railway volume list` reports none). A container's filesystem is ephemeral, so this data is **lost on every redeploy and possibly on a restart**; the app then starts again with a freshly generated benchmark. To keep data:
+1. Attach a volume to `silicopulse-backend` (e.g. mounted at `/data`).
+2. Set `SILICOPULSE_DATA_DIR=/data`.
+
+No code change is needed.
 
 ## Security notes
 
