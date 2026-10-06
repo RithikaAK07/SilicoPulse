@@ -182,7 +182,7 @@ cd backend
 .venv\Scripts\python -m pytest
 ```
 
-The suite (85 tests) runs against an isolated temporary data folder with no network or Gemini calls. It covers:
+The suite (103 tests) runs against an isolated temporary data folder with no network or Gemini calls. It covers:
 
 - auth and roles
 - backward compatibility of every existing endpoint

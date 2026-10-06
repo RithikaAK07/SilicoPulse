@@ -50,6 +50,7 @@ CONCEPT_ALIASES: dict[str, str] = {
 }
 _MACHINE_SPEED = re.compile(r"(spindle|motor|fan|shaft|rotor|rotation|rotational|wheel|pump|drum)")
 _DATA_SPEED = re.compile(r"(read|write|transfer|io|data|network|net|link|bus|copy|seq|rand)")
+_GENERIC_PERF = re.compile(r"^(speed|score|perf|performance|value|speed_value|perf_score)$")
 _INDEX_NAME = re.compile(r"^(unnamed(_\d+)?|index|idx|row|row_?(id|num|number|no|index)|c_\d+|col|column|no|n|sr_?no|s_?no|serial|seq|sequence|_)$")
 
 # ----------------------------------------------------------------------------- outcome polarity
@@ -104,14 +105,15 @@ def assess_outcome(name: str, values: list[str]) -> dict:
             "reason": f"The values {vals} of '{name}' are not recognised pass/fail labels. Please select which value(s) mean FAIL."}
 
 
-def _legacy_ts_rate(s: pl.Series) -> float:
-    """How well canonicalize() would parse this text column on its own (its existing branch)."""
+def _legacy_ts_parse(s: pl.Series) -> tuple[float, bool]:
+    """How canonicalize() would parse this text column on its own: (parse rate, timezone-aware result?)."""
     try:
         parsed = s.cast(pl.Utf8).str.to_datetime(strict=False, time_unit="ms")
     except Exception:
-        return 0.0
+        return 0.0, False
     valid = len(s) - s.null_count()
-    return (len(parsed) - parsed.null_count()) / valid if valid else 0.0
+    tz_aware = isinstance(parsed.dtype, pl.Datetime) and parsed.dtype.time_zone is not None
+    return ((len(parsed) - parsed.null_count()) / valid if valid else 0.0), tz_aware
 
 
 def _is_row_index(s: pl.Series) -> bool:
@@ -166,13 +168,29 @@ def adapt(table: ParsedTable, raw: bytes | None, roles: list[dict]) -> tuple[pl.
             transforms.append({"column": c, "original": original.get(c, c), "transform": f"recognised as '{concept}' (synonym)"})
     m = det["mapping"]
 
-    # 3. irrelevant columns: a plain row index is not a configuration parameter
+    # 3. irrelevant columns: the provenance tag added when compatible files are combined, and a plain
+    #    row index, are not configuration parameters (the model must not learn which file a row came from)
+    if table.extra.get("members") and m["roles"].get("source_file", "ignore") != "ignore":
+        m["roles"]["source_file"] = "ignore"
+        transforms.append({"column": "source_file", "original": "source_file",
+                           "transform": "provenance (file each row came from): kept as metadata, not a configuration parameter"})
     for c, r in list(m["roles"].items()):
         if r != "ignore" and (_INDEX_NAME.match(c) and _is_row_index(df[c]) or (_is_row_index(df[c]) and df[c].n_unique() == len(df))):
             m["roles"][c] = "ignore"
             transforms.append({"column": c, "original": original.get(c, c), "transform": "row index: ignored (not a configuration parameter)"})
     # semantic detector fills only fields the existing detector left empty (e.g. non-English names)
     _fill_gaps(m, roles, {o: sc for sc, o in original.items()})
+    # a generically named "performance" column ("speed", "score") holding only a few fixed values is a
+    # setting (e.g. 1200/1800/2400 rpm), not a measured metric: give it the role the existing detector
+    # gives any discrete numeric column. Specific names (throughput, mbps, iops, ...) are never touched.
+    perf = m.get("performance")
+    if perf and _GENERIC_PERF.match(perf) and df[perf].dtype.is_numeric():
+        nu = df[perf].drop_nulls().n_unique()
+        if nu <= 12 and nu <= 0.1 * max(len(df), 1):
+            m["performance"] = None
+            m["roles"][perf] = "config"
+            transforms.append({"column": perf, "original": original.get(perf, perf),
+                               "transform": f"only {nu} distinct values: treated as a configuration setting, not a performance metric"})
     for col in det["columns"]:
         col["role"] = next((k for k in ("outcome", "run_id", "config_id", "seed", "error_signature", "log", "timestamp", "environment",
                                          "hardware", "workload", "performance") if m.get(k) == col["name"]), None) or m["roles"].get(col["name"], "ignore")
@@ -181,10 +199,12 @@ def adapt(table: ParsedTable, raw: bytes | None, roles: list[dict]) -> tuple[pl.
     ts = m.get("timestamp")
     if ts and df[ts].dtype == pl.Utf8:
         parsed, rate, method = parse_timestamps(df[ts], name_hint=True)
-        legacy = _legacy_ts_rate(df[ts])
+        legacy, legacy_tz = _legacy_ts_parse(df[ts])
         # day/month ambiguity is checked whichever parser would succeed: the pipeline must use the order the user confirms
         ambiguous = parsed is not None and "ambiguous" in method
-        if parsed is not None and rate >= 0.5 and (rate > legacy + 1e-9 or ambiguous):
+        # "...Z" / "+02:00" text would become a timezone-aware column, which the analytics cannot load on hosts
+        # without a time-zone database: hand over the same instants as naive UTC instead
+        if parsed is not None and rate >= 0.5 and (rate > legacy + 1e-9 or ambiguous or legacy_tz):
             df = df.with_columns(parsed.alias(ts))
             transforms.append({"column": ts, "original": original.get(ts, ts),
                                "transform": f"timestamps parsed ({method}; {rate:.0%} valid)"})

@@ -1,6 +1,6 @@
 "use client";
 /** Universal preprocessor UI: pipeline steps, detected-type preview, ZIP/sheet report, telemetry mapping + result. */
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { AlertTriangle, CheckCircle2, Circle, FileArchive, Info, Loader2, RotateCcw, Settings2, UploadCloud, XCircle } from "lucide-react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { ChartTooltip, axisProps } from "./common";
@@ -323,8 +323,14 @@ export function PreprocessPanel({
 
 const fmt = (v: number | null | undefined) => (v == null || !isFinite(v) ? "–" : Math.abs(v) >= 1000 ? num(v, 0) : Math.abs(v) >= 10 ? v.toFixed(1) : v.toFixed(3));
 
-export function TelemetryResult({ status, onClear, canClear, clearing }: { status: any; onClear: () => void; canClear: boolean; clearing: boolean }) {
+export function TelemetryResult({ status, onClear, canClear, clearing, justIngested = false }: {
+  status: any; onClear: () => void; canClear: boolean; clearing: boolean; justIngested?: boolean;
+}) {
   const { meta, summary } = status;
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (justIngested) ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [justIngested]);
   const data = useMemo(() => summary.series.x.map((x: string | number, i: number) => {
     const row: Record<string, unknown> = { x };
     for (const [k, v] of Object.entries(summary.series.channels as Record<string, (number | null)[]>)) row[k] = v[i];
@@ -333,6 +339,13 @@ export function TelemetryResult({ status, onClear, canClear, clearing }: { statu
   const xFmt = (v: string | number) => (summary.series.x_kind === "time" ? String(v).slice(11, 19) : String(v));
   return (
     <Card>
+      <div ref={ref} className="scroll-mt-4" aria-hidden />
+      {justIngested && (
+        <div className="flex items-center gap-2 rounded-t-xl border-b border-grey-200 bg-grey-50 px-5 py-2.5 text-sm font-semibold text-black" role="status">
+          <CheckCircle2 className="h-4 w-4" /> Telemetry dataset ingested successfully.
+          <span className="font-normal text-grey-500">Ingested {new Date(meta.activated_at).toLocaleString()} · stored and available after refresh</span>
+        </div>
+      )}
       <CardHeader className="flex-wrap">
         <div className="min-w-0">
           <CardTitle>Telemetry dataset · {meta.part ?? meta.original_filename}</CardTitle>

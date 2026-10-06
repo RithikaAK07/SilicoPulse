@@ -94,6 +94,7 @@ export function UploadTab() {
   const [tmap, setTmap] = useState<TelemetryMapping | null>(null);
   const [mode, setMode] = useState<"execution" | "telemetry">("execution");
   const [telemetry, setTelemetry] = useState<any>(null);
+  const [telemetryIngested, setTelemetryIngested] = useState(false);
   const [clearing, setClearing] = useState(false);
 
   useEffect(() => {
@@ -121,6 +122,7 @@ export function UploadTab() {
     setPreview(null);
     setResult(null);
     setMode("execution");
+    setTelemetryIngested(false);
     if (!SUPPORTED_EXT.some((x) => f.name.toLowerCase().endsWith(x))) {
       setError(UNSUPPORTED_MSG);
       setStage("error");
@@ -175,6 +177,7 @@ export function UploadTab() {
       form.append("mapping", JSON.stringify(tmap));
       const res = await upload<any>("/api/upload/ingest", form);
       setTelemetry(res.telemetry);
+      setTelemetryIngested(true);
       setResult(null);
       setUni(null);
       setStage("done");
@@ -189,6 +192,7 @@ export function UploadTab() {
     try {
       await post("/api/telemetry/reset", {});
       setTelemetry(null);
+      setTelemetryIngested(false);
     } finally {
       setClearing(false);
     }
@@ -331,6 +335,15 @@ export function UploadTab() {
                     <div className="mb-3"><PreprocessSteps busy={stage === "analyzing"} failed={stage === "error" ? error : null} /></div>
                   )}
                   {mode === "execution" && <StepIndicator stage={stage} />}
+                  {mode === "telemetry" && stage === "done" && telemetryIngested && telemetry?.active && (
+                    <div className="flex flex-wrap items-center gap-2 text-sm text-black" role="status">
+                      <CheckCircle2 className="h-4 w-4 text-black" />
+                      <span className="font-semibold">Telemetry dataset ingested successfully.</span>
+                      <span className="text-xs text-grey-500">
+                        {num(telemetry.meta.rows)} samples · {telemetry.meta.channels.length} channel{telemetry.meta.channels.length === 1 ? "" : "s"} · no PASS/FAIL labels created · execution dataset unchanged
+                      </span>
+                    </div>
+                  )}
                   {error && stage !== "preview" && (
                     <div className="mt-3 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
                       <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /> {error}
@@ -363,7 +376,9 @@ export function UploadTab() {
         />
       )}
 
-      {telemetry?.active && <TelemetryResult status={telemetry} onClear={clearTelemetry} canClear={canUpload} clearing={clearing} />}
+      {telemetry?.active && (
+        <TelemetryResult status={telemetry} onClear={clearTelemetry} canClear={canUpload} clearing={clearing} justIngested={telemetryIngested && stage === "done"} />
+      )}
 
       {preview && mapping && (stage === "mapping" || stage === "ingesting") && (
         <MappingDialog
@@ -427,8 +442,9 @@ function SuccessCard({ result }: { result: any }) {
             </div>
           )}
           {result.dataset.synthetic_columns.length > 0 && (
-            <div className="mt-1 text-xs text-grey-500">Not present in the CSV (neutral defaults used): {result.dataset.synthetic_columns.join(", ")}</div>
+            <div className="mt-1 text-xs text-grey-500">Not present in the uploaded file (neutral defaults used): {result.dataset.synthetic_columns.join(", ")}</div>
           )}
+          <UnavailableAnalyses synthetic={result.dataset.synthetic_columns} mapping={result.mapping} />
         </div>
         <Link href="/dashboard">
           <Button>
@@ -437,6 +453,30 @@ function SuccessCard({ result }: { result: any }) {
         </Link>
       </CardContent>
     </Card>
+  );
+}
+
+/** Analyses that need a field the uploaded file does not contain: explained, never fabricated. */
+const ANALYSIS_NEEDS: { analysis: string; field: string; missing: (syn: string[], m: any) => boolean }[] = [
+  { analysis: "Performance / throughput analysis & Pareto trade-offs", field: "performance metric", missing: (s) => s.includes("throughput_mbps") },
+  { analysis: "Seed repeatability & determinism (Q4)", field: "random seed", missing: (s) => s.includes("seed") },
+  { analysis: "Trend & drift over real time", field: "timestamp", missing: (s) => s.includes("timestamp") },
+  { analysis: "Root-cause fingerprints by error signature (Q5)", field: "error signature", missing: (_s, m) => !m?.error_signature },
+  { analysis: "Breakdown by environment / hardware / workload", field: "environment, hardware or workload", missing: (s) => ["environment", "hardware", "workload"].every((c) => s.includes(c)) },
+  { analysis: "Telemetry correlations (IOPS, latency, CPU, memory, retries)", field: "telemetry columns",
+    missing: (s) => ["iops", "latency_p99_ms", "cpu_util", "mem_util", "retry_count", "instability_index"].every((c) => s.includes(c)) },
+];
+function UnavailableAnalyses({ synthetic, mapping }: { synthetic: string[]; mapping: any }) {
+  const rows = ANALYSIS_NEEDS.filter((a) => a.missing(synthetic ?? [], mapping));
+  if (!rows.length) return null;
+  return (
+    <ul className="mt-2 space-y-0.5 text-xs text-grey-600" aria-label="Analyses not available">
+      {rows.map((a) => (
+        <li key={a.analysis}>
+          <span className="font-medium text-black">{a.analysis}:</span> Required field not available for this analysis ({a.field}).
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -497,7 +537,7 @@ function MappingDialog({
       <div className="flex max-h-[92vh] w-full max-w-4xl flex-col rounded-2xl border border-grey-200 bg-white shadow-2xl">
         <div className="flex items-start justify-between gap-3 border-b border-grey-200 px-6 py-4">
           <div>
-            <h2 className="text-base font-semibold text-black">Map CSV columns</h2>
+            <h2 className="text-base font-semibold text-black">Map columns</h2>
             <p className="text-xs text-grey-500">
               <span className="font-mono">{preview.filename}</span> · {num(preview.rows)} rows · {cols.length} columns. Suggestions are auto-detected; adjust anything that looks wrong.
             </p>

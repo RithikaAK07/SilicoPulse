@@ -233,7 +233,11 @@ def preprocess(raw: bytes, filename: str) -> dict:
                                 detail="issues found" if (warn or has_err) else "no issues")
     ready = any(p["ok"] and (p["execution"]["available"] or p["telemetry"]["available"]) for p in parts)
     stages["ready"].update(status="done" if ready else "error", detail="" if ready else "No part can be ingested.")
-    default = next((p["part_id"] for p in parts if p["part_id"] == "combined" and p["ok"]), None) or next((p["part_id"] for p in parts if p["ok"]), None)
+    # most likely data part: combined compatible files, then ingestible execution data, then telemetry, then size
+    def likely(p: dict) -> tuple:
+        return (p["part_id"] == "combined" and p["ok"], p["ok"], p["ok"] and p["execution"]["available"],
+                p["ok"] and p["telemetry"]["available"], p.get("rows", 0))
+    default = max(parts, key=likely)["part_id"] if any(p["ok"] for p in parts) else None
     archive = parsed["archive"]
     if archive is not None:
         archive["combinable"] = parsed.get("combinable", len(parsed["tables"]) == 1)

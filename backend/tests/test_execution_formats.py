@@ -194,3 +194,106 @@ def test_genuinely_missing_outcome_is_not_invented():
     p = part(csv(df), "no_outcome.csv")
     assert not p["execution"]["available"] and p["execution"]["preview"]["mapping"]["outcome"] is None
     assert p["telemetry"]["available"]
+
+
+# ------------------------------------------------------------------ more layouts from the specification
+def test_uppercase_generic_speed_example():
+    """RESULT | TEMP_C | SPEED | EVENT_TIME: a SPEED column holding a few fixed settings is a configuration
+    parameter (not the performance metric), so the file reaches the pipeline like examples 1-3."""
+    iso = [t.replace(" ", "T") + "Z" for t in TIMES]
+    df = pl.DataFrame({"RESULT": np.where(FAIL, "FAIL", "PASS"), "TEMP_C": TEMP, "SPEED": RPM, "EVENT_TIME": iso})
+    frame, meta, det, report = canon(csv(df), "ex4.csv")
+    assert det["mapping"]["outcome"] == "result" and det["mapping"]["timestamp"] == "event_time"
+    assert det["mapping"]["performance"] is None and meta["config_params"] == ["speed"] and meta["random_vars"] == ["temp_c"]
+    assert frame["failed"].to_list() == FAIL.astype(int).tolist() and "timestamp" not in meta["synthetic_columns"]
+    assert any("configuration setting" in t["transform"] for t in report["transforms"])
+
+
+def test_continuous_speed_stays_performance_metric():
+    sp = rng.normal(500, 40, N)
+    df = pl.DataFrame({"time": TIMES, "mode": rng.choice(["a", "b", "c"], N), "speed": sp, "status": np.where(FAIL, "fail", "pass")})
+    frame, meta, det, _ = canon(csv(df), "speed.csv")
+    assert det["mapping"]["performance"] == "speed" and frame["throughput_mbps"].to_list() == pytest.approx(sp.tolist())
+    assert "throughput_mbps" not in meta["synthetic_columns"]
+
+
+def test_success_failure_words():
+    df = pl.DataFrame({"time": TIMES, "temperature": TEMP, "rpm": RPM, "outcome": np.where(FAIL, "FAILURE", "SUCCESS")})
+    frame, _, det, report = canon(csv(df), "sf.csv")
+    assert det["mapping"]["fail_values"] == ["failure"] and not report["confirmations"]
+    assert frame["failed"].to_list() == FAIL.astype(int).tolist()
+
+
+def test_log_file_execution_keeps_log_text():
+    lines = [f"{t} {'ERROR' if f else 'INFO'} run=r{i} temp_c={tc} rpm={r} result={'FAIL' if f else 'PASS'} msg=\"{'CRC mismatch' if f else 'ok'}\""
+             for i, (t, tc, r, f) in enumerate(zip(TIMES, TEMP, RPM, FAIL))]
+    frame, meta, det, _ = canon("\n".join(lines).encode(), "runs.log")
+    m = det["mapping"]
+    assert m["outcome"] == "result" and m["timestamp"] == "timestamp" and m["log"] == "message"
+    assert frame["failed"].to_list() == FAIL.astype(int).tolist()
+    assert meta["config_params"] == ["rpm"] and "temp_c" in meta["random_vars"]
+    assert "CRC mismatch" in frame.filter(pl.col("failed") == 1)["log_trace"][0]  # raw log text preserved for Root Cause & Logs
+
+
+def test_workbook_default_is_the_data_sheet():
+    import xlsxwriter
+    buf = io.BytesIO()
+    wb = xlsxwriter.Workbook(buf)
+    wb.add_worksheet("Summary").write_row(0, 0, ["Report", "Owner"])
+    wb.get_worksheet_by_name("Summary").write_row(1, 0, ["Q1", "lab-3"])
+    ws = wb.add_worksheet("Runs")
+    ws.write_row(0, 0, ["Status", "Spindle Speed", "Motor Temperature", "Event Time"])
+    for i in range(N):
+        ws.write_row(i + 1, 0, ["FAIL" if FAIL[i] else "PASS", int(RPM[i]), float(TEMP[i]), TIMES[i]])
+    wb.add_worksheet("Empty")
+    wb.close()
+    r = preprocess(buf.getvalue(), "book.xlsx")
+    default = next(p for p in r["parts"] if p["part_id"] == r["default_part"])
+    assert default["label"].endswith("Runs") and default["execution"]["available"]
+    assert {s["name"]: s["status"] for s in r["sheets"]}["Empty"].startswith("empty")
+
+
+def test_telemetry_dataset_persists_across_restart(client, h):
+    cnc = ("Timestamp,vibration_g,motor_temp_c,spindle_rpm\n" + "\n".join(
+        f"2026-10-05T15:{i // 6:02d}:{(i % 6) * 10:02d}.277Z,{0.4 + (i % 7) / 100},{48 + (i % 5) / 2},{2400 + i % 9}" for i in range(120))).encode()
+    pv = client.post("/api/upload/preview", files={"file": ("CNC #1 • Health.csv", cnc)}, headers=h).json()
+    r = client.post("/api/upload/ingest", data={"upload_id": pv["upload_id"], "mode": "telemetry"}, headers=h)
+    assert r.status_code == 200 and r.json()["telemetry"]["active"]
+    from app.telemetry import TelemetryStore
+    reloaded = TelemetryStore().status()  # what a restarted server / refreshed page sees
+    assert reloaded["active"] and reloaded["meta"]["rows"] == 120 and reloaded["meta"]["original_filename"] == "CNC #1 • Health.csv"
+    assert [c["original"] for c in reloaded["meta"]["channels"]] == ["vibration_g", "motor_temp_c", "spindle_rpm"]
+    assert reloaded["meta"]["outcome"] is None
+    client.post("/api/telemetry/reset", headers=h)
+
+
+def test_zip_combined_execution_files_do_not_learn_the_file_name():
+    import zipfile
+    half = N // 2
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        for k in (0, 1):
+            sl = slice(k * half, (k + 1) * half)
+            z.writestr(f"runs_{k}.csv", csv(pl.DataFrame({"time": TIMES[sl], "temperature": TEMP[sl], "rpm": RPM[sl],
+                                                          "result": np.where(FAIL[sl], "FAIL", "PASS")})))
+    raw = buf.getvalue()
+    r = preprocess(raw, "runs.zip")
+    assert r["default_part"] == "combined"
+    table, member = load_part(raw, "runs.zip", "combined")
+    df, det, report = execution_frame(table, member)
+    assert det["mapping"]["roles"]["source_file"] == "ignore"
+    frame, meta = uh.canonicalize(df, det["mapping"], "runs.zip")
+    assert "source_file" not in meta["config_params"] and meta["config_params"] == ["rpm"]
+    assert frame["failed"].to_list() == FAIL.astype(int).tolist()
+
+
+@pytest.mark.parametrize("suffix", ["Z", "+00:00", "+02:00"])
+def test_timezone_timestamps_reach_the_pipeline_as_naive_utc(suffix):
+    ts = [t.replace(" ", "T") + suffix for t in TIMES]
+    df = pl.DataFrame({"time": ts, "temperature": TEMP, "rpm": RPM, "result": np.where(FAIL, "FAIL", "PASS")})
+    frame, meta, _, _ = canon(csv(df), "tz.csv")
+    assert frame.schema["timestamp"] == pl.Datetime("ms") and "timestamp" not in meta["synthetic_columns"]
+    from datetime import datetime, timedelta
+    shift = {"Z": 0, "+00:00": 0, "+02:00": -2}[suffix]  # same instants, expressed in UTC
+    expect = [datetime.strptime(t, "%Y-%m-%d %H:%M:%S") + timedelta(hours=shift) for t in TIMES]
+    assert frame["timestamp"].to_list() == expect
