@@ -60,8 +60,16 @@ def _roles(table: ParsedTable) -> list[dict]:
 def _part(table: ParsedTable, part_id: str, raw: bytes | None) -> dict:
     roles = _roles(table)
     issues = list(table.issues) + validate(table.frame, roles, table.invalid_numeric)
-    exec_df, det, report = adapt(table, raw, roles)
-    mapping = det["mapping"]
+    try:
+        exec_df, det, report = adapt(table, raw, roles)
+    except Exception as e:  # e.g. a single-column CSV: the column table is still produced
+        detail = getattr(e, "detail", None)
+        if not isinstance(detail, str):
+            log.warning("execution adapter failed for %s: %s", table.label, type(e).__name__)
+        exec_df, det = table.frame, None
+        report = {"confirmations": [], "transforms": [], "outcome": None, "renamed_for_detection": {},
+                  "error": detail if isinstance(detail, str) else "The file layout is not usable as an execution log."}
+    mapping = det["mapping"] if det else {"outcome": None}
     # an outcome column exists even when its FAIL values still need the user's confirmation
     has_outcome = bool(mapping.get("outcome"))
     for c in report["confirmations"]:
@@ -77,10 +85,10 @@ def _part(table: ParsedTable, part_id: str, raw: bytes | None) -> dict:
         "rows": len(table.frame), "columns": [{k: v for k, v in r.items() if k != "values"} for r in roles],
         "issues": [i.to_dict() for i in issues], "ok": not errors,
         "execution": {
-            "available": has_outcome and not errors,
-            "reason": None if has_outcome else ("PASS/FAIL outcome is not present." if not errors else errors[0].message),
+            "available": has_outcome and not errors and det is not None,
+            "reason": report.get("error") or (None if has_outcome else ("PASS/FAIL outcome is not present." if not errors else errors[0].message)),
             # payload consumed by the existing mapping dialog
-            "preview": {"rows": len(exec_df), "columns": det["columns"], "mapping": mapping, "low_card_values": det["low_card_values"]},
+            "preview": {"rows": len(exec_df), "columns": det["columns"], "mapping": mapping, "low_card_values": det["low_card_values"]} if det else None,
             "confirmations": report["confirmations"],
             "transforms": report["transforms"],
             "outcome_assessment": report["outcome"],
@@ -208,9 +216,13 @@ def preprocess(raw: bytes, filename: str) -> dict:
             parts.append(_part(table, part_id, member_bytes))
         except Exception:
             log.exception("mapping failed for part %s of %s", part_id, display)
+            try:  # still list every header column so the user can see and map them
+                cols = [{k: v for k, v in r.items() if k != "values"} for r in _roles(table)]
+            except Exception:
+                cols = []
             parts.append({"part_id": part_id, "label": safe_display_name(table.label), "ok": False, "rows": len(table.frame),
                           "issues": [{"severity": "error", "message": "This part could not be analysed (unexpected layout).", "column": None}],
-                          "columns": [], "data_type": "tabular", "data_type_label": DATA_TYPE_LABELS["tabular"],
+                          "columns": cols, "data_type": "tabular", "data_type_label": DATA_TYPE_LABELS["tabular"],
                           "execution": {"available": False, "reason": "unreadable", "preview": None},
                           "telemetry": {"available": False, "reason": "unreadable", "mapping": {"timestamp": None, "roles": {}}}})
     stages["fields"].update(status="done", detail=f"{sum(len(p['columns']) for p in parts[:1])} columns profiled")

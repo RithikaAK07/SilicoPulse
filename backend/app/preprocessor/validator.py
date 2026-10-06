@@ -11,8 +11,10 @@ SMALL_DATASET = 20
 def validate(df: pl.DataFrame, roles: list[dict], invalid: dict[str, int]) -> list[Issue]:
     issues: list[Issue] = []
     n = len(df)
-    if n == 0 or df.width == 0:
+    if df.width == 0:
         return [Issue("error", "No tabular or structured data could be detected.")]
+    if n == 0:
+        return [Issue("error", f"The file has {df.width} column header{'s' if df.width != 1 else ''} but no data rows.")]
     if n < SMALL_DATASET:
         issues.append(Issue("warning", f"Very small dataset ({n} row{'s' if n != 1 else ''}): statistics will be unreliable."))
     try:

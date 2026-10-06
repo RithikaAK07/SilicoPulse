@@ -153,6 +153,8 @@ def unit_info(name: str) -> dict:
         return {"unit": "A"}
     if last in ("w", "watt", "watts") and any(x in t for x in ("power", "watt", "watts")):
         return {"unit": "W"}
+    if "%" in name:
+        return {"unit": "%"}
     return {"unit": None}
 
 

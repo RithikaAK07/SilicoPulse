@@ -103,7 +103,8 @@ export function UploadTab() {
   function selectPart(pv: UniversalPreview, id: string) {
     const part = pv.parts.find((p) => p.part_id === id) ?? pv.parts[0];
     setPartId(part.part_id);
-    setTmap(part.telemetry.available ? { timestamp: part.telemetry.mapping.timestamp, roles: { ...part.telemetry.mapping.roles } } : null);
+    const tm = part.telemetry?.mapping;
+    setTmap(tm ? { timestamp: tm.timestamp ?? null, roles: { ...(tm.roles ?? {}) } } : null);
     const ex = part.execution.preview;
     if (part.execution.available && ex) {
       setPreview({ upload_id: pv.upload_id, filename: part.label, size_bytes: pv.size_bytes, rows: ex.rows, columns: ex.columns, mapping: ex.mapping, low_card_values: ex.low_card_values, confirmations: part.execution.confirmations ?? [] });

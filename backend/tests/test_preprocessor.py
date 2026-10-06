@@ -284,3 +284,46 @@ def test_fahrenheit_converted_and_unknown_units_flagged():
     frame, meta = normalize_telemetry(df, "ts", {"oil_temp_f": "telemetry", "spindle_load": "telemetry"}, {})
     assert frame["oil_temp_c"].to_list() == [100.0, 0.0]
     assert {c["original"]: c["unit"] for c in meta["channels"]}["spindle_load"] == "unit unknown"
+
+
+# ---------------------------------------------------------------- detected-columns table: any raw CSV
+RAW_CSVS = {
+    "header_only.csv": b"a,b,c\n",
+    "single_column.csv": b"value\n" + b"\n".join(str(i).encode() for i in range(30)) + b"\n",
+    "ragged.csv": b"a,b,c\n1,2\n3,4,5,6\n7,8,9\n",
+    "blank_headers.csv": b",,z\n" + b"\n".join(f"{i},t,{i}".encode() for i in range(30)) + b"\n",
+    "odd_names.csv": ("Temperature (°C),CPU %,naïve-flag,enabled,empty\n"
+                      + "\n".join(f"{20 + i},{i},{'x' if i % 2 else 'y'},{'true' if i % 2 else 'false'}," for i in range(30)) + "\n").encode(),
+    "text_only.csv": b"first,second\n" + b"\n".join(f"w{i},same".encode() for i in range(30)) + b"\n",
+    "one_row.csv": b"a,b\n1,2\n",
+}
+TABLE_FIELDS = ("name", "display_type", "role", "confidence", "unit", "missing", "missing_pct")
+
+
+@pytest.mark.parametrize("name", list(RAW_CSVS))
+def test_detected_columns_table_for_any_raw_csv(client, h, name):
+    raw = RAW_CSVS[name]
+    r = client.post("/api/upload/preview", files={"file": (name, raw)}, headers=h)
+    assert r.status_code == 200, r.text  # never a backend/schema error for a raw CSV
+    p = r.json()["parts"][0]
+    header = raw.decode("utf-8").splitlines()[0].split(",")
+    assert len(p["columns"]) == len(header)  # one row per header column
+    tel = p["telemetry"]["mapping"]
+    for c in p["columns"]:
+        assert all(k in c for k in TABLE_FIELDS), (c["name"], [k for k in TABLE_FIELDS if k not in c])
+        assert c["display_type"] in {"Boolean", "Datetime", "Int64", "Float64", "String", "Empty"}
+        assert 0.3 <= c["confidence"] <= 1
+        assert c["name"] == tel["timestamp"] or tel["roles"].get(c["name"]) in {"telemetry", "context", "log", "ignore"}
+
+
+def test_detected_columns_values():
+    p = preprocess(RAW_CSVS["odd_names.csv"], "odd.csv")["parts"][0]
+    cols = {c["name"]: c for c in p["columns"]}
+    assert cols["CPU %"]["unit"] == "%" and cols["Temperature (°C)"]["unit"] == "°C"
+    assert cols["enabled"]["display_type"] == "Boolean" and cols["CPU %"]["display_type"] == "Int64"
+    assert cols["empty"]["role"] == "unclassified" and cols["empty"]["display_type"] == "Empty" and cols["empty"]["missing_pct"] == 1.0
+    hdr = preprocess(RAW_CSVS["header_only.csv"], "h.csv")["parts"][0]
+    assert hdr["rows"] == 0 and not hdr["ok"] and [c["name"] for c in hdr["columns"]] == ["a", "b", "c"]
+    assert any("3 column headers but no data rows" in i["message"] for i in hdr["issues"])
+    single = preprocess(RAW_CSVS["single_column.csv"], "s.csv")["parts"][0]
+    assert single["columns"][0]["name"] == "value" and not single["execution"]["available"] and single["execution"]["reason"]

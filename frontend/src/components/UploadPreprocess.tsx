@@ -19,6 +19,7 @@ export interface PColumn {
   name: string; normalized: string; dtype: string; rows: number; missing: number; n_unique: number; invalid: number;
   sample: string[]; role: string; confidence: number; reason: string; alternatives: { role: string; confidence: number }[];
   ambiguous: boolean; unit: string | null; timestamp_parse_rate: number;
+  display_type?: string; missing_pct?: number | null;
 }
 export interface Part {
   part_id: string; label: string; parser: string; data_type: string; data_type_label: string; rows: number; ok: boolean;
@@ -72,8 +73,19 @@ const STAGE_LABELS = ["File detected", "Parsing", "Detecting fields", "Mapping f
 const ROLE_TEXT: Record<string, string> = {
   timestamp: "Timestamp", outcome: "Outcome (pass/fail)", performance: "Performance", telemetry: "Telemetry", config: "Config parameter",
   run_id: "Run ID", config_id: "Config ID", seed: "Seed", environment: "Environment", hardware: "Hardware", workload: "Workload",
-  error: "Error signature", level: "Log level", log: "Log text", ignore: "Ignore", context: "Context",
+  error: "Error signature", level: "Log level", log: "Log text", ignore: "Ignore", context: "Context", unclassified: "Unclassified",
 };
+
+// Detected-columns table: safe display values for any raw column (missing fields fall back to "–")
+const NUMERIC_TYPE = /^(Int|UInt|Float)/;
+const colType = (c: PColumn) => c.display_type ?? c.dtype ?? "–";
+const colConfidence = (c: PColumn) => (typeof c.confidence === "number" && isFinite(c.confidence) ? `${Math.round(c.confidence * 100)}%` : "–");
+const colUnit = (c: PColumn) => c.unit ?? (NUMERIC_TYPE.test(colType(c)) ? "unit unknown" : "–");
+function colMissing(c: PColumn) {
+  if (typeof c.missing !== "number" || !c.missing) return "–";
+  const share = c.missing_pct ?? (c.rows ? c.missing / c.rows : null);
+  return share == null ? num(c.missing) : `${num(c.missing)} (${(share * 100).toFixed(share < 0.01 ? 1 : 0)}%)`;
+}
 const T_ROLES: TelemetryRole[] = ["telemetry", "context", "log", "ignore"];
 
 /** Pipeline steps; while uploading (no stages yet) the first step spins. */
@@ -123,6 +135,8 @@ export function PreprocessPanel({
 }) {
   const part = pv.parts.find((p) => p.part_id === partId) ?? pv.parts[0];
   const nTel = tmap ? Object.entries(tmap.roles).filter(([c, r]) => r === "telemetry" && c !== tmap.timestamp).length : 0;
+  // telemetry ingestion is offered when detected, or when the user marks a column as telemetry in the table
+  const telemetryOffered = part.ok && !!tmap && (part.telemetry.available || nTel > 0);
   const tsCands = part.columns.filter((c) => c.role === "timestamp" || c.timestamp_parse_rate > 0.5 || /time|date/i.test(c.name));
   return (
     <Card>
@@ -216,18 +230,18 @@ export function PreprocessPanel({
                 {part.columns.map((c) => (
                   <tr key={c.name} className="border-t border-grey-150" title={c.reason}>
                     <td className="px-3 py-1 font-mono text-grey-800 [overflow-wrap:anywhere]">{c.name}</td>
-                    <td className="px-3 py-1 text-grey-500">{c.dtype}</td>
+                    <td className="px-3 py-1 text-grey-500" title={c.dtype}>{colType(c)}</td>
                     <td className="px-3 py-1 text-black">
                       {ROLE_TEXT[c.role] ?? c.role}
                       {c.ambiguous && <span className="ml-1 text-2xs text-red-700">ambiguous{c.alternatives[0] ? ` (or ${ROLE_TEXT[c.alternatives[0].role] ?? c.alternatives[0].role})` : ""}</span>}
                     </td>
-                    <td className="px-3 py-1 text-right tabular-nums text-grey-600">{Math.round(c.confidence * 100)}%</td>
-                    <td className="px-3 py-1 text-grey-600">{c.unit ?? (/Int|Float/.test(c.dtype) ? "unit unknown" : "–")}</td>
-                    <td className="px-3 py-1 text-right tabular-nums text-grey-600">{c.missing ? num(c.missing) : "–"}</td>
+                    <td className="px-3 py-1 text-right tabular-nums text-grey-600">{colConfidence(c)}</td>
+                    <td className="px-3 py-1 text-grey-600">{colUnit(c)}</td>
+                    <td className="whitespace-nowrap px-3 py-1 text-right tabular-nums text-grey-600">{colMissing(c)}</td>
                     {tmap && (
                       <td className="px-3 py-1">
                         {c.name === tmap.timestamp ? <span className="text-grey-600">timestamp</span> : (
-                          <select value={tmap.roles[c.name] ?? "ignore"} disabled={busy} aria-label={`Telemetry role for ${c.name}`}
+                          <select value={tmap.roles[c.name] ?? "context"} disabled={busy} aria-label={`Telemetry role for ${c.name}`}
                             onChange={(e) => setTmap({ ...tmap, roles: { ...tmap.roles, [c.name]: e.target.value as TelemetryRole } })}
                             className="h-7 w-full rounded-md border border-grey-300 bg-white px-2 text-xs hover:border-grey-400 focus:border-red-600 focus:shadow-focus focus:outline-none">
                             {T_ROLES.map((r) => <option key={r} value={r}>{ROLE_TEXT[r]}</option>)}
@@ -258,7 +272,7 @@ export function PreprocessPanel({
           <IssueList issues={[...(pv.file_issues ?? []), ...part.issues]} />
         </section>
 
-        {part.telemetry.available && tmap && (
+        {telemetryOffered && tmap && (
           <section className="rounded-lg border border-grey-200 bg-grey-50 p-4">
             <div className="eyebrow mb-2">Telemetry analysis</div>
             <label className="block max-w-sm text-xs">
@@ -291,7 +305,7 @@ export function PreprocessPanel({
 
         <div className="flex flex-wrap items-center justify-end gap-2 border-t border-grey-200 pt-4">
           {!part.execution.available && <span className="mr-auto text-xs text-grey-600">Execution-log ingestion: {part.execution.reason ?? "unavailable"}</span>}
-          {part.telemetry.available && tmap && (
+          {telemetryOffered && tmap && (
             <Button variant={part.execution.available ? "outline" : "primary"} onClick={onTelemetry} disabled={busy || nTel === 0}>
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <UploadCloud className="h-4 w-4" />} Ingest as telemetry ({nTel} channel{nTel === 1 ? "" : "s"})
             </Button>

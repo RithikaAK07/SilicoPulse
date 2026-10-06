@@ -155,14 +155,20 @@ def sniff_delimiter(text: str) -> str | None:
 
 
 def parse_delimited(text: str, label: str, kind: str) -> ParsedTable | None:
-    """Delimited text -> typed table, or None when the text is not tabular."""
+    """Delimited text -> typed table, or None when the text is not tabular.
+
+    A .csv file is always read as CSV (comma when no other delimiter is consistent), so a raw,
+    single-column, ragged or header-only CSV still yields its columns.
+    """
     delim = sniff_delimiter(text)
     if delim is None:
-        return None
+        if kind != "csv":
+            return None
+        delim = ","
     issues: list[Issue] = []
     rows = list(csv.reader(io.StringIO(text), delimiter=delim))
     rows = [r for r in rows if any(cell.strip() for cell in r)]
-    if len(rows) < 2:
+    if not rows or (len(rows) < 2 and kind != "csv"):
         return None
     header, dup = _dedupe_header(rows[0])
     issues += dup
@@ -432,7 +438,7 @@ def parse_bytes(raw: bytes, filename: str, kind: str) -> tuple[list[ParsedTable]
         t = parse_delimited(text, filename, "txt") or parse_log(text, filename)
     else:  # log
         t = parse_log(text, filename) or parse_delimited(text, filename, "txt")
-    if t is None or t.frame.width == 0 or len(t.frame) == 0:
+    if t is None or t.frame.width == 0 or (len(t.frame) == 0 and kind != "csv"):
         raise PreprocessError(f"{filename}: no tabular or structured data could be detected.")
     t.issues = issues + t.issues
     return [t], [], []
