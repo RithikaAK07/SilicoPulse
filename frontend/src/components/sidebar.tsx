@@ -9,10 +9,10 @@ import { cn, num } from "@/lib/utils";
 
 const NAV = [
   { href: "/dashboard", label: "Executive Overview", icon: LayoutDashboard, q: "Summary" },
-  { href: "/discovery", label: "Config Discovery", icon: BrainCircuit, q: "Q1 · Q2" },
-  { href: "/randomization", label: "Randomization Engine", icon: Dices, q: "Q3 · Q4" },
-  { href: "/root-cause", label: "Root Cause & Logs", icon: SearchCode, q: "Q5 · Q6" },
-  { href: "/predictive", label: "Predict & Prescribe", icon: Sparkles, q: "Q7 · Q8" },
+  { href: "/discovery", label: "Config Discovery", icon: BrainCircuit, q: "" },
+  { href: "/randomization", label: "Randomization Engine", icon: Dices, q: "" },
+  { href: "/root-cause", label: "Root Cause & Logs", icon: SearchCode, q: "" },
+  { href: "/predictive", label: "Predict & Prescribe", icon: Sparkles, q: "" },
   { href: "/insights", label: "Evidence & Guardrails", icon: ShieldCheck, q: "Trust" },
   { href: "/copilot", label: "AI Copilot", icon: Bot, q: "NL query" },
   { href: "/upload", label: "CSV Data Upload", icon: Upload, q: "Ingest" },
