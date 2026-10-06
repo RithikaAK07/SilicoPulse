@@ -84,3 +84,13 @@ export function exportCSV(name: string, rows: Record<string, unknown>[]) {
 export function exportJSON(name: string, data: unknown) {
   download(name, JSON.stringify(data, null, 2), "application/json");
 }
+
+/** Demo account first names are not shown in the UI (the account data itself is unchanged). */
+const HIDDEN_NAMES = /\b(?:Avery|Riley|Jordan)\b\s*/g;
+export const displayName = (name?: string | null) => (name ?? "").replace(HIDDEN_NAMES, "").trim();
+
+/** Question markers (Q1–Q8) are not shown in generated text, e.g. "Top failure drivers (Q1):". */
+export const stripQuestionMarkers = (text: string) =>
+  text
+    .replace(/\s*\(Q[1-8](?:\s*[,·/&–-]\s*Q[1-8])*\)/g, "")
+    .replace(/(^|\n|\*\*|- )Q[1-8](?:\s*[,·/&–-]\s*Q[1-8])*\s*[:·—–-]\s*/g, "$1");

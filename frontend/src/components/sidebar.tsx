@@ -5,7 +5,7 @@ import { useState } from "react";
 import { Activity, Bot, BrainCircuit, Cpu, Database, Dices, LayoutDashboard, Menu, SearchCode, ShieldCheck, Sparkles, Upload, X } from "lucide-react";
 import { useMeta } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
-import { cn, num } from "@/lib/utils";
+import { cn, displayName, num } from "@/lib/utils";
 
 const NAV = [
   { href: "/dashboard", label: "Executive Overview", icon: LayoutDashboard, q: "Summary" },
@@ -27,7 +27,8 @@ export function Sidebar() {
   const { data: meta } = useMeta();
   const { user, dataset } = useAuth();
   const text = open ? "" : "hidden lg:inline"; // label visibility in rail mode
-  const initials = user?.name.split(" ").map((p) => p[0]).slice(0, 2).join("") ?? "";
+  const shownName = displayName(user?.name);
+  const initials = shownName.split(" ").filter(Boolean).map((p) => p[0]).slice(0, 2).join("");
   return (
     <>
       <button
@@ -86,11 +87,11 @@ export function Sidebar() {
         </nav>
         {user && (
           <div className={cn("mx-3 mb-2 flex items-center gap-2.5 rounded-[10px] px-2 py-2", !open && "sm:justify-center lg:justify-start")}>
-            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-grad-black text-xs font-semibold text-white" title={`${user.name} · ${user.role_title}`}>
+            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-grad-black text-xs font-semibold text-white" title={`${shownName} · ${user.role_title}`}>
               {initials}
             </span>
             <div className={cn("min-w-0 text-xs", text)}>
-              <div className="truncate font-semibold text-black">{user.name}</div>
+              <div className="truncate font-semibold text-black">{shownName}</div>
               <div className="truncate text-grey-600">{user.role_title}</div>
             </div>
           </div>

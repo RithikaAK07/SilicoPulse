@@ -16,7 +16,7 @@ export default function RootCausePage() {
   return (
     <>
       <PageHeader
-        badge="Q5 · Q6 — Root Cause & Change Impact"
+        badge="Root Cause & Change Impact"
         title="Root Cause & Log Intelligence"
         subtitle="Failure fingerprints mined from config conditions and log anomalies, plus a side-by-side diff engine for any passing vs failing execution."
       />
@@ -189,7 +189,7 @@ function DiffEngine({ signatures }: { signatures: string[] }) {
       <CardHeader>
         <div>
           <CardTitle className="flex items-center gap-2">
-            <GitCompare className="h-4 w-4 text-black" /> Q6 · Execution diff & change impact
+            <GitCompare className="h-4 w-4 text-black" /> Execution diff & change impact
           </CardTitle>
           <CardDescription>Select Run A (pass) and Run B (fail). Changed keys are ranked by model importance; SHAP Δ shows which change moved the risk.</CardDescription>
         </div>

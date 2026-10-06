@@ -29,7 +29,7 @@ export default function PredictivePage() {
   return (
     <>
       <PageHeader
-        badge="Q7 · Q8 — Predictive & Prescriptive"
+        badge="Predictive & Prescriptive"
         title="Predictive & Prescriptive Engine"
         subtitle="Score any configuration's failure risk before it runs, then let the optimizer recommend the next run with confidence and explainability."
       />

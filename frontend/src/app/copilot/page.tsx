@@ -5,7 +5,7 @@ import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Responsive
 import { postStream, useActiveFilters } from "@/lib/api";
 import { useChat, type ChatChart, type ChatMessage } from "@/lib/store";
 import { useAuth } from "@/context/AuthContext";
-import { BAR, DIVERGING, INK, SERIES, cn } from "@/lib/utils";
+import { BAR, DIVERGING, INK, SERIES, cn, displayName } from "@/lib/utils";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ChartTooltip, Markdown, axisProps } from "@/components/common";
@@ -152,7 +152,7 @@ export default function CopilotPage() {
     send(userMsg.content, all.slice(0, idx - 1));
   }
 
-  const firstName = user?.name.split(" ")[0];
+  const firstName = displayName(user?.name.split(" ")[0]);
   return (
     <div className="flex h-[calc(100vh-5.5rem)] flex-col">
       <Card className="flex min-h-0 flex-1 flex-col overflow-hidden">

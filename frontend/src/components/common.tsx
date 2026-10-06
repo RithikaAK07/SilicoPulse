@@ -3,6 +3,7 @@ import { AlertTriangle, Loader2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { API_URL } from "@/lib/api";
+import { stripQuestionMarkers } from "@/lib/utils";
 import { Card } from "./ui/card";
 import { Skeleton } from "./ui/skeleton";
 
@@ -81,7 +82,7 @@ function stripInlineMath(md: string) {
 export function Markdown({ children }: { children: string }) {
   return (
     <div className="prose-hub">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{stripInlineMath(children)}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{stripQuestionMarkers(stripInlineMath(children))}</ReactMarkdown>
     </div>
   );
 }

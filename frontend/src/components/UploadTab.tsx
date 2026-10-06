@@ -55,9 +55,9 @@ type Stage = "idle" | "analyzing" | "preview" | "mapping" | "ingesting" | "done"
 
 const FIELD_KEYS = ["outcome", "performance", "run_id", "timestamp", "seed", "error_signature", "log", "config_id", "environment", "hardware", "workload"] as const;
 const OPTIONAL_FIELDS: { key: (typeof FIELD_KEYS)[number]; label: string; hint: string }[] = [
-  { key: "seed", label: "Random seed", hint: "enables seed repeatability (Q4)" },
+  { key: "seed", label: "Random seed", hint: "enables seed repeatability" },
   { key: "timestamp", label: "Timestamp", hint: "trend & drift charts" },
-  { key: "error_signature", label: "Error signature", hint: "root-cause fingerprints (Q5)" },
+  { key: "error_signature", label: "Error signature", hint: "root-cause fingerprints" },
   { key: "log", label: "Log / trace text", hint: "log anomaly mining & diffs" },
   { key: "run_id", label: "Run ID", hint: "execution diff selector" },
   { key: "config_id", label: "Config / profile ID", hint: "otherwise derived from settings" },
@@ -459,9 +459,9 @@ function SuccessCard({ result }: { result: any }) {
 /** Analyses that need a field the uploaded file does not contain: explained, never fabricated. */
 const ANALYSIS_NEEDS: { analysis: string; field: string; missing: (syn: string[], m: any) => boolean }[] = [
   { analysis: "Performance / throughput analysis & Pareto trade-offs", field: "performance metric", missing: (s) => s.includes("throughput_mbps") },
-  { analysis: "Seed repeatability & determinism (Q4)", field: "random seed", missing: (s) => s.includes("seed") },
+  { analysis: "Seed repeatability & determinism", field: "random seed", missing: (s) => s.includes("seed") },
   { analysis: "Trend & drift over real time", field: "timestamp", missing: (s) => s.includes("timestamp") },
-  { analysis: "Root-cause fingerprints by error signature (Q5)", field: "error signature", missing: (_s, m) => !m?.error_signature },
+  { analysis: "Root-cause fingerprints by error signature", field: "error signature", missing: (_s, m) => !m?.error_signature },
   { analysis: "Breakdown by environment / hardware / workload", field: "environment, hardware or workload", missing: (s) => ["environment", "hardware", "workload"].every((c) => s.includes(c)) },
   { analysis: "Telemetry correlations (IOPS, latency, CPU, memory, retries)", field: "telemetry columns",
     missing: (s) => ["iops", "latency_p99_ms", "cpu_util", "mem_util", "retry_count", "instability_index"].every((c) => s.includes(c)) },

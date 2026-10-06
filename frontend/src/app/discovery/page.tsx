@@ -15,7 +15,7 @@ export default function DiscoveryPage() {
   return (
     <>
       <PageHeader
-        badge="Q1 · Q2 — Configuration Discovery"
+        badge="Configuration Discovery"
         title="Configuration Discovery & Pareto Analytics"
         subtitle="Which settings drive success or failure, and which configurations deliver the best throughput–stability trade-off."
       />
@@ -34,7 +34,7 @@ function Content({ data }: { data: any }) {
         <Card>
           <CardHeader>
             <div>
-              <CardTitle>Q1 · Feature influence on pass/fail</CardTitle>
+              <CardTitle>Feature influence on pass/fail</CardTitle>
               <CardDescription>
                 Blended score: Random Forest importance (60%) + mutual information (40%). Model AUC {data.model_auc.toFixed(3)}.
               </CardDescription>
@@ -77,7 +77,7 @@ function Content({ data }: { data: any }) {
         <Card>
           <CardHeader>
             <div>
-              <CardTitle>Q2 · Pareto frontier — throughput vs failure rate</CardTitle>
+              <CardTitle>Pareto frontier — throughput vs failure rate</CardTitle>
               <CardDescription>
                 Each dot is a configuration profile (≥5 runs). {pareto.length} profiles are Pareto-optimal: none beats them on both axes.
               </CardDescription>

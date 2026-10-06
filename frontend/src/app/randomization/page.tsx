@@ -21,7 +21,7 @@ export default function RandomizationPage() {
   return (
     <>
       <PageHeader
-        badge="Q3 · Q4 — Randomization & Determinism"
+        badge="Randomization & Determinism"
         title="Randomization & Determinism Engine"
         subtitle="Rank random variables by impact, expose seed-reproducible failures, and separate deterministic (config-driven) from stochastic failures."
       />
@@ -49,7 +49,7 @@ function Content({ data }: { data: any }) {
         <Card>
           <CardHeader>
             <div>
-              <CardTitle>Q3 · Randomization impact ranking</CardTitle>
+              <CardTitle>Randomization impact ranking</CardTitle>
               <CardDescription>Impact = failure-rate swing across the variable’s range (45%) + RF importance (35%) + mutual information (20%).</CardDescription>
             </div>
           </CardHeader>
@@ -187,7 +187,7 @@ function Content({ data }: { data: any }) {
         <Card>
           <CardHeader>
             <div>
-              <CardTitle>Q4 · Deterministic vs stochastic failures</CardTitle>
+              <CardTitle>Deterministic vs stochastic failures</CardTitle>
               <CardDescription>
                 Deterministic = the configuration fails ≥80% of runs on any seed. Stochastic = outcome depends on seed, thermal drift or jitter.
               </CardDescription>
