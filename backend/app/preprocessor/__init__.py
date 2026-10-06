@@ -12,6 +12,7 @@ import posixpath
 
 import polars as pl
 
+from .execution import adapt
 from .mapper import DATA_TYPE_LABELS, classify, detect_roles
 from .models import PREPROCESSOR_VERSION, SUPPORTED_EXTENSIONS, SUPPORTED_LABEL, Issue, ParsedTable, PreprocessError
 from .parsers import detect_file_type, parse_bytes
@@ -27,41 +28,6 @@ STAGES = [("detected", "File detected"), ("parsing", "Parsing"), ("fields", "Det
 
 NO_OUTCOME = ("PASS/FAIL outcome is not present. This file was detected as telemetry-only data and can be processed "
               "using telemetry analysis.")
-
-
-def _execution_view(table: ParsedTable, raw: bytes | None) -> tuple[pl.DataFrame, dict]:
-    """Frame + mapping for the EXISTING execution pipeline (upload_handler.detect)."""
-    from .. import upload_handler as uh
-
-    if table.legacy_csv and raw is not None:
-        frame = uh.read_csv(raw)  # identical to the legacy /api/upload-csv path
-    else:
-        frame = table.frame.with_columns([pl.col(c).cast(pl.Utf8) for c, t in table.frame.schema.items()
-                                          if t in (pl.Date, pl.Time) or isinstance(t, (pl.Datetime, pl.Duration))])
-    df, _ = uh.sanitize(frame)
-    return df, uh.detect(df)
-
-
-def _fill_gaps(mapping: dict, roles: list[dict], sanitized: dict[str, str], low_card: dict) -> dict:
-    """Use the semantic detector only where the existing detector found nothing (keeps legacy behaviour)."""
-    from .. import upload_handler as uh
-
-    m = dict(mapping)
-    by_role: dict[str, list[dict]] = {}
-    for r in roles:
-        by_role.setdefault(r["role"], []).append(r)
-    for field, role in (("outcome", "outcome"), ("timestamp", "timestamp"), ("run_id", "run_id"), ("seed", "seed"),
-                        ("error_signature", "error"), ("log", "log"), ("config_id", "config_id"), ("environment", "environment"),
-                        ("hardware", "hardware"), ("workload", "workload"), ("performance", "performance")):
-        if m.get(field) or not by_role.get(role):
-            continue
-        col = sanitized.get(by_role[role][0]["name"])
-        if col and col not in {v for k, v in m.items() if k not in ("roles", "fail_values") and isinstance(v, str)}:
-            m[field] = col
-            m.get("roles", {}).pop(col, None)
-    if m.get("outcome") and not m.get("fail_values"):
-        m["fail_values"] = uh._fail_values(m["outcome"], low_card.get(m["outcome"], []))
-    return m
 
 
 def _telemetry_mapping(roles: list[dict]) -> dict:
@@ -82,13 +48,24 @@ def _telemetry_mapping(roles: list[dict]) -> dict:
     return {"timestamp": ts, "roles": out}
 
 
-def _part(table: ParsedTable, part_id: str, raw: bytes | None) -> dict:
+def _roles(table: ParsedTable) -> list[dict]:
     roles = detect_roles(table.frame, table.invalid_numeric)
+    vunits = table.extra.get("value_normalization") or {}
+    for r in roles:  # a unit written inside the values ("500 MB/s") is explicit too
+        if vunits.get(r["name"], {}).get("unit") and not r.get("unit"):
+            r["unit"] = vunits[r["name"]]["unit"]
+    return roles
+
+
+def _part(table: ParsedTable, part_id: str, raw: bytes | None) -> dict:
+    roles = _roles(table)
     issues = list(table.issues) + validate(table.frame, roles, table.invalid_numeric)
-    exec_df, det = _execution_view(table, raw)
-    sanitized = dict(zip(table.frame.columns, exec_df.columns)) if exec_df.width == table.frame.width else {}
-    mapping = _fill_gaps(det["mapping"], roles, sanitized, det["low_card_values"])
-    has_outcome = bool(mapping.get("outcome") and mapping.get("fail_values"))
+    exec_df, det, report = adapt(table, raw, roles)
+    mapping = det["mapping"]
+    # an outcome column exists even when its FAIL values still need the user's confirmation
+    has_outcome = bool(mapping.get("outcome"))
+    for c in report["confirmations"]:
+        issues.append(Issue("warning", f"Confirmation needed: {c['message']}", c.get("column")))
     dtype = classify(roles, table.kind, has_outcome)
     telemetry_cols = [r for r in roles if _telemetry_mapping(roles)["roles"].get(r["name"]) == "telemetry"]
     if not has_outcome:
@@ -104,6 +81,9 @@ def _part(table: ParsedTable, part_id: str, raw: bytes | None) -> dict:
             "reason": None if has_outcome else ("PASS/FAIL outcome is not present." if not errors else errors[0].message),
             # payload consumed by the existing mapping dialog
             "preview": {"rows": len(exec_df), "columns": det["columns"], "mapping": mapping, "low_card_values": det["low_card_values"]},
+            "confirmations": report["confirmations"],
+            "transforms": report["transforms"],
+            "outcome_assessment": report["outcome"],
         },
         "telemetry": {
             "available": bool(telemetry_cols) and not errors,
@@ -253,8 +233,9 @@ def preprocess(raw: bytes, filename: str) -> dict:
             "combinable": parsed.get("combinable"), "combine_reason": parsed.get("combine_reason")}
 
 
-def execution_frame(table: ParsedTable, raw: bytes | None) -> tuple[pl.DataFrame, dict]:
-    return _execution_view(table, raw)
+def execution_frame(table: ParsedTable, raw: bytes | None) -> tuple[pl.DataFrame, dict, dict]:
+    """(frame, detect() result, adaptation report) for the existing execution pipeline."""
+    return adapt(table, raw, _roles(table))
 
 
 def load_part(raw: bytes, filename: str, part_id: str) -> tuple[ParsedTable, bytes | None]:

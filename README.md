@@ -110,6 +110,11 @@ and (for a ZIP) every member with its status.
   - It is stored as a separate telemetry dataset: per-channel statistics, robust-z anomalies, trends, sampling gaps and charts. The active execution dataset and models are not changed.
   - Analyses that need an outcome, error signature or seed report *"Required field not available for this analysis."*
   - `GET /api/telemetry/status` returns the telemetry dataset; `POST /api/telemetry/reset` removes it.
+- **Execution files in any format** reach the existing pipeline in the format it already expects. The pipeline itself is unchanged.
+  - Synonymous names (`time` / `event_time` / `date_time` / `Zeit`, `rpm` / `spindle_speed` / `rpm_value`, `temperature` / `motor_temperature` / `temp`, `result` / `status` / `Ergebnis`) map identically. The user's own column names are kept.
+  - Column order, capitalization and extra columns don't matter. Row indexes and free text are ignored.
+  - `;`/tab separators, decimal commas, units inside values (`500 MB/s`) and many date formats are normalized.
+  - PASS/FAIL is normalized only when its meaning is reliable: explicit words, or `1/0`, `true/false` and `yes/no` under a name that states polarity (`failed`, `passed`). Otherwise nothing is pre-selected, and ingestion is blocked until the user confirms the FAIL value(s). Ambiguous day/month dates are handled the same way.
 - **Units** come only from explicit column-name suffixes (`_c`, `_rpm`, `_g`, `_kpa`, …); otherwise they show as *unit unknown*. The only conversion is an explicit °F → °C.
 - **ZIP safety:**
   - Members are read in memory and never extracted.
@@ -177,7 +182,7 @@ cd backend
 .venv\Scripts\python -m pytest
 ```
 
-The suite (64 tests) runs against an isolated temporary data folder with no network or Gemini calls. It covers:
+The suite (85 tests) runs against an isolated temporary data folder with no network or Gemini calls. It covers:
 
 - auth and roles
 - backward compatibility of every existing endpoint
@@ -185,6 +190,7 @@ The suite (64 tests) runs against an isolated temporary data folder with no netw
 - learned thresholds, seed and determinism policies, guardrails and model validation
 - upload, mapping, missing values and the leakage guard
 - the universal preprocessor: every file type, telemetry-only data, ZIP safety (zip-slip, bombs), and validation messages
+- execution-format independence: differently formatted files produce the same canonical execution data; ambiguous outcomes and dates require confirmation
 - the Copilot pipeline (intents, evidence retrieval, filter injection, grounding check, quota handling) against a mock Gemini server
 
 The frontend is checked with `npx tsc --noEmit` and `npm run build`.

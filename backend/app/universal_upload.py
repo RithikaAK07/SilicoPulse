@@ -22,6 +22,7 @@ from fastapi.concurrency import run_in_threadpool
 from . import upload_handler as uh
 from .auth import get_current_user, require_permission
 from .preprocessor import PREPROCESSOR_VERSION, SUPPORTED_LABEL, PreprocessError, execution_frame, load_part, preprocess
+from .preprocessor.execution import assess_outcome
 from .preprocessor.mapper import detect_roles
 from .preprocessor.models import MAX_UPLOAD_BYTES
 from .preprocessor.normalizer import normalize_telemetry
@@ -115,13 +116,26 @@ async def universal_ingest(
         provenance = {"original_filename": safe_display_name(info["filename"]), "file_type": info["file_type"], "part": table.label,
                       "parser": table.kind, "preprocessing_version": PREPROCESSOR_VERSION}
         if mode == "execution":
-            df, det = execution_frame(table, member_raw)
+            df, det, report = execution_frame(table, member_raw)
+            confirmed = set(user_map.pop("confirmed", None) or [])
             m = _merge(det["mapping"], user_map)
             if not m.get("outcome"):
                 raise HTTPException(422, "PASS/FAIL outcome is not present. This file was detected as telemetry-only data and can be "
                                          "processed using telemetry analysis.")
+            # never ingest a guessed PASS/FAIL polarity or date order: the user must confirm it
+            pending = []
+            if "outcome" not in confirmed:
+                a = assess_outcome(m["outcome"], det["low_card_values"].get(m["outcome"], []))
+                if not a["reliable"]:
+                    pending.append(a["reason"])
+            for c in report["confirmations"]:
+                if c["field"] == "timestamp" and c["column"] == m.get("timestamp") and "timestamp" not in confirmed:
+                    pending.append(c["message"])
+            if pending:
+                raise HTTPException(422, "Please confirm the mapping before ingesting: " + " ".join(pending))
             frame, meta = uh.canonicalize(df, m, safe_display_name(info["filename"]))
-            meta["preprocessing"] = provenance
+            meta["preprocessing"] = {**provenance, "transforms": report["transforms"], "confirmed": sorted(confirmed),
+                                     "renamed_for_detection": report["renamed_for_detection"]}
             prep_s = time.perf_counter() - t0
             store.activate_upload(frame, meta)
             return {"mode": "execution", "detected": det["columns"], "mapping": m, "prep_seconds": round(prep_s, 2)}

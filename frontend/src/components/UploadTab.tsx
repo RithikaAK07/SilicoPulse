@@ -6,7 +6,8 @@ import {
 } from "lucide-react";
 import { api, download, post, upload, type DatasetStatus } from "@/lib/api";
 import {
-  ACCEPT, PreprocessPanel, PreprocessSteps, SUPPORTED_EXT, TelemetryResult, UNSUPPORTED_MSG, type TelemetryMapping, type UniversalPreview,
+  ACCEPT, PreprocessPanel, PreprocessSteps, SUPPORTED_EXT, TelemetryResult, UNSUPPORTED_MSG, assessOutcome, type Confirmation, type TelemetryMapping,
+  type UniversalPreview,
 } from "./UploadPreprocess";
 import { useAuth } from "@/context/AuthContext";
 import { SERIES, cn, num } from "@/lib/utils";
@@ -38,6 +39,7 @@ interface Mapping {
   hardware: string | null;
   workload: string | null;
   roles: Record<string, Role>;
+  confirmed?: string[];
 }
 interface Preview {
   upload_id: string;
@@ -47,6 +49,7 @@ interface Preview {
   columns: ColumnInfo[];
   mapping: Mapping;
   low_card_values: Record<string, string[]>;
+  confirmations?: Confirmation[];
 }
 type Stage = "idle" | "analyzing" | "preview" | "mapping" | "ingesting" | "done" | "error";
 
@@ -103,7 +106,7 @@ export function UploadTab() {
     setTmap(part.telemetry.available ? { timestamp: part.telemetry.mapping.timestamp, roles: { ...part.telemetry.mapping.roles } } : null);
     const ex = part.execution.preview;
     if (part.execution.available && ex) {
-      setPreview({ upload_id: pv.upload_id, filename: part.label, size_bytes: pv.size_bytes, rows: ex.rows, columns: ex.columns, mapping: ex.mapping, low_card_values: ex.low_card_values });
+      setPreview({ upload_id: pv.upload_id, filename: part.label, size_bytes: pv.size_bytes, rows: ex.rows, columns: ex.columns, mapping: ex.mapping, low_card_values: ex.low_card_values, confirmations: part.execution.confirmations ?? [] });
       setMapping(ex.mapping);
     } else {
       setPreview(null);
@@ -463,9 +466,10 @@ function MappingDialog({
     const next = { ...mapping, [key]: v };
     if (key === "outcome") {
       const vals = v ? preview.low_card_values[v] ?? [] : [];
-      next.fail_values = vals.filter((x) => /fail|error|abort|crash|timeout|^false$|^0$/.test(x)).slice(0, 3);
-      if (!next.fail_values.length && vals.length === 2) next.fail_values = [vals[0]];
+      next.fail_values = v ? assessOutcome(v, vals).fail_values : [];
+      next.confirmed = (mapping.confirmed ?? []).filter((f) => f !== "outcome");
     }
+    if (key === "timestamp") next.confirmed = (mapping.confirmed ?? []).filter((f) => f !== "timestamp");
     setMapping(next);
   };
   const problems: string[] = [];
@@ -473,6 +477,19 @@ function MappingDialog({
   else if (!outcomeValues) problems.push("The outcome column must have 12 or fewer distinct values.");
   else if (!mapping.fail_values.length) problems.push("Tick at least one value that means FAIL.");
   if (counts.config === 0) problems.push("Mark at least one column as a configuration parameter.");
+  // mappings that could not be determined reliably must be confirmed by the user (never guessed)
+  const needs: { field: "outcome" | "timestamp"; message: string }[] = [];
+  const oa = mapping.outcome && outcomeValues ? assessOutcome(mapping.outcome, outcomeValues) : null;
+  if (oa && !oa.reliable) {
+    const fromServer = preview.confirmations?.find((c) => c.field === "outcome" && c.column === mapping.outcome);
+    needs.push({ field: "outcome", message: fromServer?.message ?? oa.reason });
+  }
+  const tsc = preview.confirmations?.find((c) => c.field === "timestamp" && c.column === mapping.timestamp);
+  if (tsc) needs.push({ field: "timestamp", message: tsc.message });
+  const isConfirmed = (f: string) => (mapping.confirmed ?? []).includes(f);
+  needs.filter((n) => !isConfirmed(n.field)).forEach((n) => problems.push(n.field === "outcome" ? "Confirm which value(s) mean FAIL." : "Confirm the date order of the timestamp."));
+  const toggleConfirm = (f: string) =>
+    setMapping({ ...mapping, confirmed: isConfirmed(f) ? (mapping.confirmed ?? []).filter((x) => x !== f) : [...(mapping.confirmed ?? []), f] });
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 backdrop-blur-sm sm:items-center" role="dialog" aria-modal="true" aria-label="Column mapping">
@@ -490,6 +507,21 @@ function MappingDialog({
         </div>
 
         <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5">
+          {needs.length > 0 && (
+            <section className="space-y-2" aria-label="Confirmation needed">
+              {needs.map((n) => (
+                <label key={n.field} className="flex cursor-pointer items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-black">
+                  <input type="checkbox" className="mt-1 h-4 w-4 shrink-0 accent-red-600" checked={isConfirmed(n.field)} onChange={() => toggleConfirm(n.field)} />
+                  <span>
+                    <span className="font-semibold">Confirmation needed · {n.field === "outcome" ? "PASS/FAIL values" : "date order"}.</span> {n.message}{" "}
+                    <span className="text-grey-600">
+                      {n.field === "outcome" ? "Tick the FAIL value(s) below, then check this box to confirm." : "Check this box to confirm, or choose another timestamp column."}
+                    </span>
+                  </span>
+                </label>
+              ))}
+            </section>
+          )}
           <section className="grid gap-6 md:grid-cols-2">
             <div className="rounded-xl border border-red-200 bg-red-50 p-4">
               <div className="eyebrow mb-2">Outcome (pass / fail) · required</div>

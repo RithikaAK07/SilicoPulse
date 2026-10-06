@@ -23,7 +23,7 @@ export interface PColumn {
 export interface Part {
   part_id: string; label: string; parser: string; data_type: string; data_type_label: string; rows: number; ok: boolean;
   columns: PColumn[]; issues: PIssue[]; parser_details?: Record<string, unknown>;
-  execution: { available: boolean; reason: string | null; preview: any };
+  execution: { available: boolean; reason: string | null; preview: any; confirmations?: Confirmation[]; transforms?: Transform[] };
   telemetry: { available: boolean; reason: string | null; mapping: { timestamp: string | null; roles: Record<string, TelemetryRole> } };
 }
 export interface UniversalPreview {
@@ -33,6 +33,40 @@ export interface UniversalPreview {
   sheets: { name: string; rows: number; columns: number; status: string }[];
 }
 export interface TelemetryMapping { timestamp: string | null; roles: Record<string, TelemetryRole> }
+export interface Confirmation { field: "outcome" | "timestamp"; column: string; required: boolean; message: string }
+export interface Transform { column: string; original: string; transform: string; unit?: string | null }
+
+/* Same rule as the backend (preprocessor/execution.py assess_outcome): FAIL values are suggested only when
+   the meaning is reliable; otherwise nothing is pre-selected and the user must confirm. */
+const FAIL_WORDS = new Set(["fail", "failed", "failure", "error", "err", "errored", "ko", "nok", "abort", "aborted", "crash", "crashed", "timeout",
+  "timed_out", "f", "fault", "faulted", "reject", "rejected", "ng", "bad", "red", "broken", "not_ok", "not ok"]);
+const PASS_WORDS = new Set(["pass", "passed", "success", "successful", "succeeded", "ok", "okay", "good", "p", "green", "accept", "accepted", "done",
+  "complete", "completed"]);
+const TRUE_V = new Set(["1", "true", "yes", "y", "t", "1.0"]);
+const FALSE_V = new Set(["0", "false", "no", "n", "0.0"]);
+const EMPTY = new Set(["", "null", "none", "nan", "na", "n/a"]);
+export function assessOutcome(name: string, values: string[]): { fail_values: string[]; reliable: boolean; reason: string } {
+  const vals = values.filter((v) => !EMPTY.has(v));
+  const fail = vals.filter((v) => FAIL_WORDS.has(v));
+  const passed = vals.filter((v) => PASS_WORDS.has(v));
+  const binary = vals.filter((v) => TRUE_V.has(v) || FALSE_V.has(v));
+  const unknown = vals.filter((v) => !FAIL_WORDS.has(v) && !PASS_WORDS.has(v) && !TRUE_V.has(v) && !FALSE_V.has(v));
+  const nm = name.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
+  if (fail.length && !binary.length && !unknown.length) return { fail_values: fail, reliable: true, reason: "explicit pass/fail words" };
+  if (fail.length) {
+    return { fail_values: fail, reliable: false,
+      reason: `'${name}' contains ${[...unknown, ...binary].map((v) => `'${v}'`).join(", ")} in addition to pass/fail words; rows with those values would be counted as NOT failed. Please confirm which values mean FAIL.` };
+  }
+  if (binary.length && !unknown.length && !passed.length) {
+    const fp = /(fail|error|err|defect|fault|crash|abort|reject|broken)/.test(nm);
+    const pp = /(pass|success|succeed|ok|good|accept)/.test(nm);
+    if (fp && !pp) return { fail_values: vals.filter((v) => TRUE_V.has(v)), reliable: true, reason: "column name describes failure" };
+    if (pp && !fp) return { fail_values: vals.filter((v) => FALSE_V.has(v)), reliable: true, reason: "column name describes success" };
+    return { fail_values: [], reliable: false, reason: `'${name}' contains ${vals.join(" / ")}; it is not clear which value means FAIL. Please select the FAIL value(s).` };
+  }
+  if (passed.length) return { fail_values: [], reliable: false, reason: `'${name}' contains ${vals.join(", ")}: only success words were recognised. Please select which value(s) mean FAIL.` };
+  return { fail_values: [], reliable: false, reason: `The values ${vals.join(", ")} of '${name}' are not recognised pass/fail labels. Please select which value(s) mean FAIL.` };
+}
 
 const STAGE_LABELS = ["File detected", "Parsing", "Detecting fields", "Mapping fields", "Validating", "Ready for ingestion"];
 const ROLE_TEXT: Record<string, string> = {
@@ -207,6 +241,17 @@ export function PreprocessPanel({
             </table>
           </div>
         </section>
+
+        {part.execution.available && (part.execution.transforms?.length ?? 0) > 0 && (
+          <section>
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-grey-500">Normalization applied</div>
+            <ul className="space-y-1 text-xs text-grey-600">
+              {part.execution.transforms!.map((t, i) => (
+                <li key={i} className="[overflow-wrap:anywhere]"><span className="font-mono text-grey-800">{t.original}</span>: {t.transform}</li>
+              ))}
+            </ul>
+          </section>
+        )}
 
         <section>
           <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-grey-500">Validation</div>

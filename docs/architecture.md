@@ -40,6 +40,7 @@ Recommendation (ml.recommend)    candidate search + training-data support + extr
 |---|---|
 | `parsers.py` | Checks the extension against the magic bytes; parses delimited text (delimiter sniffing), logs (timestamp/level/key=value, continuation lines), JSON (arrays, nested records, JSON lines) and Excel (fastexcel). |
 | `zip_handler.py` | Reads ZIP members safely in memory (zip-slip, size, count, ratio, encryption and nesting guards). |
+| `execution.py` | Adapts any execution table to the input `upload_handler.detect`/`canonicalize` already expect. Synonyms are shown to the existing detector under their concept name, then mapped back. Values are normalized. PASS/FAIL polarity and date order are confirmed by the user, never guessed. |
 | `mapper.py` | Gives each column an explainable role (name aliases, dtype, cardinality, value patterns, timestamp parse rate) and classifies the dataset type. |
 | `normalizer.py` | Parses timestamps, detects explicit units, and builds the canonical telemetry frame. |
 | `validator.py` | Produces user-facing validation messages (missing, non-numeric, invalid timestamps, duplicates, small datasets, ambiguity). |

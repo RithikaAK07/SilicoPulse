@@ -15,8 +15,64 @@ TS_FORMATS = [
     "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S%.f", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S%.f%z", "%Y-%m-%d %H:%M", "%Y-%m-%d",
     "%Y/%m/%d %H:%M:%S", "%Y/%m/%d %H:%M", "%Y/%m/%d", "%d/%m/%Y %H:%M:%S", "%m/%d/%Y %H:%M:%S", "%d/%m/%Y %H:%M", "%m/%d/%Y %H:%M",
     "%d/%m/%Y", "%m/%d/%Y", "%d-%m-%Y %H:%M:%S", "%d.%m.%Y %H:%M:%S", "%d.%m.%Y", "%Y-%m-%d %H:%M:%S,%3f",
+    "%Y-%m-%dT%H:%M", "%d.%m.%Y %H:%M", "%d-%m-%Y %H:%M", "%d-%m-%Y", "%Y%m%d %H%M%S", "%Y%m%dT%H%M%S",
+    "%d %b %Y %H:%M:%S", "%d %b %Y %H:%M", "%d-%b-%Y %H:%M:%S", "%b %d %Y %H:%M:%S", "%b %d, %Y %H:%M:%S",
+    "%m/%d/%Y %I:%M:%S %p", "%m/%d/%Y %I:%M %p", "%d/%m/%Y %I:%M:%S %p",
 ]
-_DATEISH = re.compile(r"\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}|\d{1,2}:\d{2}")
+_DATEISH = re.compile(r"\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}|\d{1,2}:\d{2}|\d{8}T?\d{0,6}")
+
+# --------------------------------------------------------------------------- numbers in text
+# Measurement units that may be written inside values ("500 MB/s", "61.5 °C"). Size-like labels
+# (4K, 64KB, 1MB) are deliberately NOT stripped: they are usually configuration choices.
+MEASURE_UNITS = {
+    "mb/s": "MB/s", "mbps": "MB/s", "mib/s": "MiB/s", "gb/s": "GB/s", "gbps": "GB/s", "kb/s": "KB/s", "ms": "ms", "us": "µs", "µs": "µs",
+    "ns": "ns", "sec": "s", "s": "s", "%": "%", "°c": "°C", "degc": "°C", "°f": "°F", "degf": "°F", "rpm": "RPM", "v": "V", "mv": "mV",
+    "ma": "mA", "w": "W", "kw": "kW", "hz": "Hz", "khz": "kHz", "mhz": "MHz", "ghz": "GHz", "iops": "IOPS", "g": "g", "psi": "psi",
+    "kpa": "kPa", "bar": "bar",
+}
+_NUM_UNIT = r"^([-+]?[\d.,]*\d)\s*([^\d\s][^\d]*)$"
+_THOUSANDS_COMMA = r"^[-+]?\d{1,3}(,\d{3})+(\.\d+)?$"
+_DECIMAL_COMMA = r"^[-+]?\d+,\d+$"
+
+
+def _number_style(st: pl.Series, decimal_comma_hint: bool) -> str:
+    """Pick ONE separator convention per column: 'dot' (1,234.5), 'comma' (1.234,5) or 'thousands' (1,234)."""
+    has_c = st.str.contains(",", literal=True)
+    has_d = st.str.contains(".", literal=True)
+    both = st.filter(has_c & has_d)
+    if len(both):
+        comma_last = both.map_elements(lambda v: v.rfind(",") > v.rfind("."), return_dtype=pl.Boolean)
+        return "comma" if float(comma_last.mean()) > 0.5 else "dot"
+    commas = st.filter(has_c)
+    if not len(commas):
+        return "dot"
+    if bool(commas.str.contains(_THOUSANDS_COMMA).all()) and not decimal_comma_hint:
+        return "dot"  # 1,234 / 12,345,678: thousands separators
+    if bool(commas.str.contains(_DECIMAL_COMMA).all()):
+        return "comma"
+    return "dot"
+
+
+def to_number(st: pl.Series, decimal_comma_hint: bool = False) -> tuple[pl.Series, str | None, str | None]:
+    """Text -> Float64 (unparseable -> null). Returns (numbers, unit stripped from values or None, transform note or None)."""
+    unit, note = None, None
+    vals = st
+    m = st.str.extract_groups(_NUM_UNIT)
+    nonnull = st.drop_nulls()
+    if len(nonnull):
+        units = m.struct.field("2").str.strip_chars().str.to_lowercase()
+        u = units.drop_nulls()
+        if len(u) >= 0.9 * len(nonnull) and u.n_unique() == 1 and u[0] in MEASURE_UNITS:
+            unit = MEASURE_UNITS[u[0]]
+            vals = pl.select(pl.when(m.struct.field("2").is_not_null()).then(m.struct.field("1")).otherwise(st)).to_series()
+            note = f"unit '{unit}' removed from values"
+    style = _number_style(vals.drop_nulls(), decimal_comma_hint)
+    if style == "comma":
+        num = vals.str.replace_all(".", "", literal=True).str.replace_all(",", ".", literal=True).cast(pl.Float64, strict=False)
+        note = ((note + "; ") if note else "") + "decimal comma converted"
+    else:
+        num = vals.str.replace_all(",", "", literal=True).cast(pl.Float64, strict=False)
+    return num.alias(st.name), unit, note
 
 
 def parse_timestamps(s: pl.Series, name_hint: bool = False) -> tuple[pl.Series | None, float, str]:

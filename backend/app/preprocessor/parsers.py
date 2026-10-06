@@ -16,6 +16,7 @@ import polars as pl
 
 from .models import (MAX_COLUMNS, MAX_JSON_DEPTH, MAX_LOG_LINES, SUPPORTED_EXTENSIONS, SUPPORTED_LABEL, Issue, ParsedTable,
                      PreprocessError)
+from .normalizer import to_number
 
 DELIMITERS = [",", "\t", "|", ";"]
 RECORD_KEYS = ("records", "data", "results", "items", "rows", "entries", "logs", "executions", "runs", "events", "measurements", "values")
@@ -72,8 +73,15 @@ def decode_text(raw: bytes) -> tuple[str, list[Issue]]:
         return raw.decode("latin-1"), issues
 
 
-def infer_types(df: pl.DataFrame) -> tuple[pl.DataFrame, dict[str, int]]:
-    """Type string columns: numeric when >= 90% of non-empty values parse (failures counted, set null)."""
+def infer_types(df: pl.DataFrame, decimal_comma_hint: bool = False, notes: dict | None = None,
+                only_special: bool = False) -> tuple[pl.DataFrame, dict[str, int]]:
+    """Type string columns: numeric when >= 90% of non-empty values parse (failures counted, set null).
+
+    Handles thousands separators, decimal commas (one convention per column) and a measurement unit
+    written inside the values ("500 MB/s"). `notes` collects {column: {"unit", "transform"}}.
+    only_special=True converts only columns that needed unit/decimal-comma handling (used on frames
+    that a legacy reader already typed, so ordinary columns keep their legacy types).
+    """
     invalid: dict[str, int] = {}
     cols = []
     for c in df.columns:
@@ -83,18 +91,30 @@ def infer_types(df: pl.DataFrame) -> tuple[pl.DataFrame, dict[str, int]]:
             continue
         st = pl.select(pl.when(s.str.strip_chars() == "").then(None).otherwise(s.str.strip_chars()).alias(c)).to_series()
         nonempty = int(st.drop_nulls().len())
-        num = st.str.replace_all(",", "").cast(pl.Float64, strict=False) if nonempty else st.cast(pl.Float64, strict=False)
+        if not nonempty:
+            cols.append(s if only_special else st)
+            continue
+        num, unit, note = to_number(st, decimal_comma_hint)
         ok = int(num.drop_nulls().len())
-        if nonempty and ok == nonempty:
+        if only_special and not note:
+            cols.append(s)
+            continue
+        if ok >= 0.9 * nonempty:
+            if ok < nonempty:
+                invalid[c] = nonempty - ok
             vals = num.drop_nulls()
-            is_int = bool((vals == vals.round(0)).all()) and float(vals.abs().max() or 0) < 2**53 and not st.drop_nulls().str.contains(r"\.").any()
+            is_int = (ok == nonempty and bool((vals == vals.round(0)).all()) and float(vals.abs().max() or 0) < 2**53
+                      and not st.drop_nulls().str.contains(r"[.,]\d").any())
             cols.append(num.cast(pl.Int64) if is_int else num)
-        elif nonempty and ok >= 0.9 * nonempty:
-            invalid[c] = nonempty - ok
-            cols.append(num)
+            if note and notes is not None:
+                notes[c] = {"unit": unit, "transform": note}
         else:
-            cols.append(st)
+            cols.append(s if only_special else st)
     return pl.DataFrame(cols), invalid
+
+
+def _note_issues(notes: dict) -> list[Issue]:
+    return [Issue("info", f"Column {c}: {v['transform']} (now numeric).", c) for c, v in notes.items()]
 
 
 def _dedupe_header(names: list[str]) -> tuple[list[str], list[Issue]]:
@@ -160,10 +180,13 @@ def parse_delimited(text: str, label: str, kind: str) -> ParsedTable | None:
     if width < 2 and kind != "csv":
         return None
     frame = pl.DataFrame({h: [r[i] for r in body] for i, h in enumerate(header)}, schema={h: pl.Utf8 for h in header})
-    frame, invalid = infer_types(frame)
+    notes: dict = {}
+    frame, invalid = infer_types(frame, decimal_comma_hint=delim in (";", "\t"), notes=notes)
+    issues += _note_issues(notes)
     name = {",": "comma", "\t": "tab", "|": "pipe", ";": "semicolon"}[delim]
     return ParsedTable(label=label, source=label, kind="csv" if kind == "csv" else "delimited", frame=frame, issues=issues,
-                       invalid_numeric=invalid, legacy_csv=(kind == "csv" and delim == "," and not dup), extra={"delimiter": name})
+                       invalid_numeric=invalid, legacy_csv=(kind == "csv" and delim == "," and not dup),
+                       extra={"delimiter": name, "value_normalization": notes})
 
 
 # --------------------------------------------------------------------------- logs
@@ -309,9 +332,10 @@ def records_to_table(records: list, label: str, kind: str, extra: dict | None = 
         else:
             cols[k] = pl.Series(k, [None if v is None else (str(v).lower() if isinstance(v, bool) else str(v)) for v in vals], dtype=pl.Utf8)
     frame = pl.DataFrame(list(cols.values())) if cols else pl.DataFrame()
-    frame, invalid = infer_types(frame)
-    return ParsedTable(label=label, source=label, kind=kind, frame=frame, issues=[Issue("info", n) for n in sorted(notes)],
-                       invalid_numeric=invalid, extra=extra or {})
+    vnotes: dict = {}
+    frame, invalid = infer_types(frame, notes=vnotes)
+    return ParsedTable(label=label, source=label, kind=kind, frame=frame, issues=[Issue("info", n) for n in sorted(notes)] + _note_issues(vnotes),
+                       invalid_numeric=invalid, extra={**(extra or {}), "value_normalization": vnotes})
 
 
 def parse_json(text: str, label: str) -> ParsedTable | None:
@@ -385,9 +409,10 @@ def parse_excel(raw: bytes, label: str) -> tuple[list[ParsedTable], list[dict]]:
         if unnamed:
             issues.append(Issue("warning", f"Sheet '{name}': {len(unnamed)} column(s) have no header."))
         df = df.with_columns([pl.col(c).cast(pl.Utf8) for c in df.columns if df[c].dtype == pl.Null])
-        df, invalid = infer_types(df.with_columns([pl.col(c).cast(pl.Utf8) for c in df.columns if df[c].dtype == pl.Object]))
-        tables.append(ParsedTable(label=f"{label} › {name}", source=label, kind="excel", frame=df, issues=issues,
-                                  invalid_numeric=invalid, extra={"sheet": name}))
+        vnotes: dict = {}
+        df, invalid = infer_types(df.with_columns([pl.col(c).cast(pl.Utf8) for c in df.columns if df[c].dtype == pl.Object]), notes=vnotes)
+        tables.append(ParsedTable(label=f"{label} › {name}", source=label, kind="excel", frame=df, issues=issues + _note_issues(vnotes),
+                                  invalid_numeric=invalid, extra={"sheet": name, "value_normalization": vnotes}))
         sheets.append({"name": name, "rows": len(df), "columns": df.width, "status": "data"})
     return tables, sheets
 
