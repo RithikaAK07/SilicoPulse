@@ -104,6 +104,11 @@ and (for a ZIP) every member with its status.
   - `mode=execution` uses the existing canonicalize-and-retrain path and the existing mapping dialog.
   - `mode=telemetry` is described below.
 - The legacy `/api/upload-csv/preview` and `/api/upload-csv` endpoints are unchanged and still CSV-only.
+- **Dataset classification** (`backend/app/preprocessor/dataset_types.py`) is central. Every part is classified from its detected fields, never its filename, as `execution`, `industrial_telemetry` or `time_series_telemetry`, and routed to its own pipeline:
+  - **execution:** the existing pipeline and every existing analysis, unchanged.
+  - **telemetry:** the telemetry store plus the **Telemetry Health** page (`/telemetry`): channel statistics, trends, anomaly windows (contiguous samples outside median ± 3.5 robust z, with what the other channels did meanwhile), channel health (stable / watch / attention, with the rule shown) and correlations.
+
+  Execution-only analyses are never applied to telemetry. Telemetry ingestion requires a timestamp and at least one numeric channel, and fails with a clear message otherwise.
 - **Telemetry-only data (no PASS/FAIL outcome)**, such as a machine-health CSV with `Timestamp, vibration_g, motor_temp_c, spindle_rpm`:
   - It is accepted and classified (e.g. *Industrial telemetry*).
   - No outcome is ever invented, and it can't be ingested as an execution log.
@@ -182,7 +187,7 @@ cd backend
 .venv\Scripts\python -m pytest
 ```
 
-The suite (103 tests) runs against an isolated temporary data folder with no network or Gemini calls. It covers:
+The suite (106 tests) runs against an isolated temporary data folder with no network or Gemini calls. It covers:
 
 - auth and roles
 - backward compatibility of every existing endpoint

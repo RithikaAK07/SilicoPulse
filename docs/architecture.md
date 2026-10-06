@@ -40,14 +40,15 @@ Recommendation (ml.recommend)    candidate search + training-data support + extr
 |---|---|
 | `parsers.py` | Checks the extension against the magic bytes; parses delimited text (delimiter sniffing), logs (timestamp/level/key=value, continuation lines), JSON (arrays, nested records, JSON lines) and Excel (fastexcel). |
 | `zip_handler.py` | Reads ZIP members safely in memory (zip-slip, size, count, ratio, encryption and nesting guards). |
+| `dataset_types.py` | Central dataset-type registry: classification (`execution`, `industrial_telemetry`, `time_series_telemetry`), then pipeline, requirements and analyses. Add a dataset type here. |
 | `execution.py` | Adapts any execution table to the input `upload_handler.detect`/`canonicalize` already expect. Synonyms are shown to the existing detector under their concept name, then mapped back. Values are normalized. PASS/FAIL polarity and date order are confirmed by the user, never guessed. |
 | `mapper.py` | Gives each column an explainable role (name aliases, dtype, cardinality, value patterns, timestamp parse rate) and classifies the dataset type. |
 | `normalizer.py` | Parses timestamps, detects explicit units, and builds the canonical telemetry frame. |
 | `validator.py` | Produces user-facing validation messages (missing, non-numeric, invalid timestamps, duplicates, small datasets, ambiguity). |
 | `models.py` | Limits, `PREPROCESSOR_VERSION` and shared types. |
 
-Plain comma CSVs are re-read with the legacy `read_csv`, so the execution mapping is identical to `/api/upload-csv/preview`. Data without an
-outcome goes to `app/telemetry.py` (a separate parquet and metadata file with provenance) and never into the outcome-trained models.
+Plain comma CSVs are re-read with the legacy `read_csv`, so the execution mapping is identical to `/api/upload-csv/preview`. Telemetry data (no
+outcome) goes to `app/telemetry.py` (a separate parquet and metadata file with provenance) and never into the outcome-trained models.
 
 ## Evidence layer
 
@@ -103,3 +104,16 @@ The Railway project `silicopulse-backend` has two services: `silicopulse-backend
 - **Charts:** `frontend/src/lib/utils.ts` holds `TOKENS`, `SERIES` (black, red-600, grey-600, grey-400, red-900, grey-300), `BAR` (grey with the top item in red), `DIVERGING` (red raises / black lowers), `seqColor` (white → red-100 → red-600 → red-900) and `riskStatus` (Low / Moderate / High / Critical; never green or amber).
 - **Typography:** Alegreya (self-hosted variable woff2 in `public/fonts`, OFL) for everything; JetBrains Mono (self-hosted) only for IDs, config keys, fingerprints, logs, diffs and code; Source Serif 4 as the fallback serif.
 - **Buttons:** `variant="primary"` is the red-gradient CTA, used exactly once per view; `default` is black; `secondary`/`outline` are white with a grey border; `ghost` has no fill.
+
+### Telemetry pipeline
+
+`/api/upload/ingest` with `mode=telemetry` needs a timestamp and at least one numeric channel. The data is persisted to `DATA_DIR/telemetry.parquet` with its provenance metadata, and `GET /api/telemetry/status` returns it.
+
+`telemetry.summarize` computes everything from measured values only:
+- per-channel statistics and trend per hour;
+- anomaly windows: contiguous runs outside median ± 3.5 robust z, with the other channels' means during each window;
+- channel health: stable / watch / attention, from the anomaly share and drift, with the rule returned alongside;
+- correlations;
+- a down-sampled series for charts.
+
+The **Telemetry Health** page (`frontend/src/app/telemetry/page.tsx`) renders it. Telemetry never touches `store`, the execution models or the execution views.

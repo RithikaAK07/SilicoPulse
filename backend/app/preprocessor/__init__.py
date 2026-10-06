@@ -12,6 +12,7 @@ import posixpath
 
 import polars as pl
 
+from .dataset_types import describe, dataset_type_of, pipeline_of
 from .execution import adapt
 from .mapper import DATA_TYPE_LABELS, classify, detect_roles
 from .models import PREPROCESSOR_VERSION, SUPPORTED_EXTENSIONS, SUPPORTED_LABEL, Issue, ParsedTable, PreprocessError
@@ -28,6 +29,9 @@ STAGES = [("detected", "File detected"), ("parsing", "Parsing"), ("fields", "Det
 
 NO_OUTCOME = ("PASS/FAIL outcome is not present. This file was detected as telemetry-only data and can be processed "
               "using telemetry analysis.")
+NO_TELEMETRY_TS = ("No timestamp column detected: telemetry analysis needs time-stamped samples. Select the timestamp column, "
+                   "or add one to the file.")
+NO_CHANNELS = "No numeric measurement channels were detected, so telemetry analysis is not possible."
 
 
 def _telemetry_mapping(roles: list[dict]) -> dict:
@@ -75,13 +79,19 @@ def _part(table: ParsedTable, part_id: str, raw: bytes | None) -> dict:
     for c in report["confirmations"]:
         issues.append(Issue("warning", f"Confirmation needed: {c['message']}", c.get("column")))
     dtype = classify(roles, table.kind, has_outcome)
-    telemetry_cols = [r for r in roles if _telemetry_mapping(roles)["roles"].get(r["name"]) == "telemetry"]
+    dataset_type = dataset_type_of(dtype)  # central registry decides the processing pipeline
+    tmap = _telemetry_mapping(roles)
+    telemetry_cols = [r for r in roles if tmap["roles"].get(r["name"]) == "telemetry"]
     if not has_outcome:
         issues.append(Issue("info", NO_OUTCOME if telemetry_cols else "PASS/FAIL outcome is not present."))
+        if telemetry_cols and not tmap["timestamp"]:
+            issues.append(Issue("warning", NO_TELEMETRY_TS))
     errors = [i for i in issues if i.severity == "error"]
+    telemetry_reason = NO_CHANNELS if not telemetry_cols else (NO_TELEMETRY_TS if not tmap["timestamp"] else None)
     return {
         "part_id": part_id, "label": safe_display_name(table.label), "source": safe_display_name(table.source), "parser": table.kind,
         "parser_details": table.extra, "data_type": dtype, "data_type_label": DATA_TYPE_LABELS[dtype],
+        "dataset_type": dataset_type, "pipeline": pipeline_of(dataset_type), "dataset_type_info": describe(dataset_type),
         "rows": len(table.frame), "columns": [{k: v for k, v in r.items() if k != "values"} for r in roles],
         "issues": [i.to_dict() for i in issues], "ok": not errors,
         "execution": {
@@ -94,9 +104,9 @@ def _part(table: ParsedTable, part_id: str, raw: bytes | None) -> dict:
             "outcome_assessment": report["outcome"],
         },
         "telemetry": {
-            "available": bool(telemetry_cols) and not errors,
-            "reason": None if telemetry_cols else "No numeric measurement columns were detected.",
-            "mapping": _telemetry_mapping(roles),
+            "available": bool(telemetry_cols) and bool(tmap["timestamp"]) and not errors,
+            "reason": telemetry_reason,
+            "mapping": tmap,
         },
     }
 
@@ -223,6 +233,7 @@ def preprocess(raw: bytes, filename: str) -> dict:
             parts.append({"part_id": part_id, "label": safe_display_name(table.label), "ok": False, "rows": len(table.frame),
                           "issues": [{"severity": "error", "message": "This part could not be analysed (unexpected layout).", "column": None}],
                           "columns": cols, "data_type": "tabular", "data_type_label": DATA_TYPE_LABELS["tabular"],
+                          "dataset_type": None, "pipeline": None, "dataset_type_info": None,
                           "execution": {"available": False, "reason": "unreadable", "preview": None},
                           "telemetry": {"available": False, "reason": "unreadable", "mapping": {"timestamp": None, "roles": {}}}})
     stages["fields"].update(status="done", detail=f"{sum(len(p['columns']) for p in parts[:1])} columns profiled")

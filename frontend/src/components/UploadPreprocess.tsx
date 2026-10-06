@@ -1,12 +1,13 @@
 "use client";
 /** Universal preprocessor UI: pipeline steps, detected-type preview, ZIP/sheet report, telemetry mapping + result. */
 import { useEffect, useMemo, useRef } from "react";
-import { AlertTriangle, CheckCircle2, Circle, FileArchive, Info, Loader2, RotateCcw, Settings2, UploadCloud, XCircle } from "lucide-react";
+import Link from "next/link";
+import { AlertTriangle, ArrowRight, CheckCircle2, Circle, FileArchive, Info, Loader2, RotateCcw, Settings2, UploadCloud, XCircle } from "lucide-react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { ChartTooltip, axisProps } from "./common";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
-import { INK, SERIES, cn, num } from "@/lib/utils";
+import { INK, SERIES, STATUS_INK, cn, num } from "@/lib/utils";
 
 export const ACCEPT = ".csv,.txt,.log,.json,.xlsx,.xls,.zip";
 export const SUPPORTED_EXT = [".csv", ".txt", ".log", ".json", ".xlsx", ".xls", ".zip", ".xlsv"];
@@ -23,6 +24,7 @@ export interface PColumn {
 }
 export interface Part {
   part_id: string; label: string; parser: string; data_type: string; data_type_label: string; rows: number; ok: boolean;
+  dataset_type?: string | null; pipeline?: "execution" | "telemetry" | null;
   columns: PColumn[]; issues: PIssue[]; parser_details?: Record<string, unknown>;
   execution: { available: boolean; reason: string | null; preview: any; confirmations?: Confirmation[]; transforms?: Transform[] };
   telemetry: { available: boolean; reason: string | null; mapping: { timestamp: string | null; roles: Record<string, TelemetryRole> } };
@@ -286,7 +288,7 @@ export function PreprocessPanel({
                   setTmap({ timestamp: ts, roles });
                 }}
                 className="h-9 w-full rounded-[10px] border border-grey-300 bg-white px-2 text-sm hover:border-grey-400 focus:border-red-600 focus:shadow-focus focus:outline-none">
-                <option value="">— none (use row order) —</option>
+                <option value="">— select the timestamp column —</option>
                 {(tsCands.length ? tsCands : part.columns).map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}
               </select>
             </label>
@@ -304,9 +306,14 @@ export function PreprocessPanel({
         )}
 
         <div className="flex flex-wrap items-center justify-end gap-2 border-t border-grey-200 pt-4">
-          {!part.execution.available && <span className="mr-auto text-xs text-grey-600">Execution-log ingestion: {part.execution.reason ?? "unavailable"}</span>}
+          {!part.execution.available && part.pipeline !== "telemetry" && <span className="mr-auto text-xs text-grey-600">Execution-log ingestion: {part.execution.reason ?? "unavailable"}</span>}
+          {part.pipeline === "telemetry" && (
+            <span className="mr-auto text-xs text-grey-600">Valid telemetry dataset: no PASS/FAIL outcome is needed. It is analysed by the telemetry pipeline; the execution dataset is not changed.</span>
+          )}
+          {telemetryOffered && tmap && !tmap.timestamp && <span className="text-xs text-red-700">Select the timestamp column to ingest telemetry.</span>}
           {telemetryOffered && tmap && (
-            <Button variant={part.execution.available ? "outline" : "primary"} onClick={onTelemetry} disabled={busy || nTel === 0}>
+            <Button variant={part.execution.available ? "outline" : "primary"} onClick={onTelemetry} disabled={busy || nTel === 0 || !tmap.timestamp}
+              title={!tmap.timestamp ? "Telemetry needs a timestamp column" : undefined}>
               {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <UploadCloud className="h-4 w-4" />} Ingest as telemetry ({nTel} channel{nTel === 1 ? "" : "s"})
             </Button>
           )}
@@ -323,8 +330,15 @@ export function PreprocessPanel({
 
 const fmt = (v: number | null | undefined) => (v == null || !isFinite(v) ? "–" : Math.abs(v) >= 1000 ? num(v, 0) : Math.abs(v) >= 10 ? v.toFixed(1) : v.toFixed(3));
 
-export function TelemetryResult({ status, onClear, canClear, clearing, justIngested = false }: {
-  status: any; onClear: () => void; canClear: boolean; clearing: boolean; justIngested?: boolean;
+const HEALTH: Record<string, { label: string; ink: string; Icon: typeof CheckCircle2 }> = {
+  stable: { label: "Stable", ink: STATUS_INK.good, Icon: CheckCircle2 },
+  watch: { label: "Watch", ink: STATUS_INK.warning, Icon: Info },
+  attention: { label: "Attention", ink: STATUS_INK.critical, Icon: AlertTriangle },
+};
+const dur = (s?: number | null) => (s == null ? "–" : s >= 3600 ? `${(s / 3600).toFixed(1)} h` : s >= 60 ? `${Math.round(s / 60)} min ${Math.round(s % 60)} s` : `${Math.round(s)} s`);
+
+export function TelemetryResult({ status, onClear, canClear, clearing, justIngested = false, showDashboardLink = false }: {
+  status: any; onClear: () => void; canClear: boolean; clearing: boolean; justIngested?: boolean; showDashboardLink?: boolean;
 }) {
   const { meta, summary } = status;
   const ref = useRef<HTMLDivElement>(null);
@@ -344,10 +358,16 @@ export function TelemetryResult({ status, onClear, canClear, clearing, justInges
         <div className="flex items-center gap-2 rounded-t-xl border-b border-grey-200 bg-grey-50 px-5 py-2.5 text-sm font-semibold text-black" role="status">
           <CheckCircle2 className="h-4 w-4" /> Telemetry dataset ingested successfully.
           <span className="font-normal text-grey-500">Ingested {new Date(meta.activated_at).toLocaleString()} · stored and available after refresh</span>
+          {showDashboardLink && (
+            <Link href="/telemetry" className="ml-auto inline-flex items-center gap-1 font-semibold text-red-700 hover:text-red-900">
+              Open telemetry dashboard <ArrowRight className="h-4 w-4" />
+            </Link>
+          )}
         </div>
       )}
       <CardHeader className="flex-wrap">
         <div className="min-w-0">
+          <div className="eyebrow mb-1">{summary.dataset_type?.label ?? "Telemetry"} · telemetry pipeline</div>
           <CardTitle>Telemetry dataset · {meta.part ?? meta.original_filename}</CardTitle>
           <CardDescription>
             {num(meta.rows)} samples · {meta.channels.length} channel{meta.channels.length === 1 ? "" : "s"}
@@ -412,15 +432,68 @@ export function TelemetryResult({ status, onClear, canClear, clearing, justInges
           </div>
         )}
 
-        <section className="rounded-lg border border-grey-200 bg-grey-50 p-4">
-          <div className="eyebrow mb-2">Not available for this dataset</div>
-          <ul className="grid gap-1 text-xs sm:grid-cols-2">
-            {summary.unavailable.map((u: any) => (
-              <li key={u.analysis} className="text-grey-600"><span className="font-medium text-black">{u.analysis}:</span> {u.message} <span className="text-grey-500">(needs {u.missing_field})</span></li>
-            ))}
-          </ul>
-          {meta.warnings?.length > 0 && <div className="mt-3"><IssueList issues={meta.warnings.map((m: string) => ({ severity: "warning", message: m, column: null }))} /></div>}
+        <section aria-label="Channel health">
+          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-grey-500">Channel health</div>
+          <div className="grid gap-3 md:grid-cols-3">
+            {summary.channels.filter((c: any) => c.health).map((c: any) => {
+              const hs = HEALTH[c.health.status] ?? HEALTH.watch;
+              return (
+                <div key={c.name} className="rounded-lg border border-grey-200 p-3" title={c.health.rule}>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono text-sm text-grey-800">{c.original}</span>
+                    <span className="inline-flex items-center gap-1 text-xs font-semibold" style={{ color: hs.ink }}>
+                      <hs.Icon className="h-3.5 w-3.5" /> {hs.label}
+                    </span>
+                  </div>
+                  <ul className="mt-1.5 space-y-0.5 text-xs text-grey-600">
+                    {c.health.reasons.map((r: string) => <li key={r}>{r}</li>)}
+                  </ul>
+                </div>
+              );
+            })}
+          </div>
+          <p className="mt-1.5 text-2xs text-grey-500">Rule: {summary.channels.find((c: any) => c.health)?.health.rule}. Normal band = median ± 3.5 robust z (MAD).</p>
         </section>
+
+        <section aria-label="Anomaly windows">
+          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-grey-500">
+            Anomaly windows · {summary.anomaly_windows_total} found{summary.anomaly_windows_total > summary.anomaly_windows.length ? ` (largest ${summary.anomaly_windows.length} shown)` : ""}
+          </div>
+          {summary.anomaly_windows.length === 0 ? (
+            <div className="text-xs text-grey-600">No sample of any channel left its normal band.</div>
+          ) : (
+            <div className="overflow-x-auto rounded-lg border border-grey-200">
+              <table className="w-full min-w-[720px] text-xs">
+                <thead className="bg-grey-50 text-grey-500">
+                  <tr>
+                    {["Channel", "When", "Duration", "Samples", "Values", "Typical", "Other channels during window (vs rest)"].map((h, i) => (
+                      <th key={h} className={cn("px-3 py-1.5 font-medium", i >= 2 && i <= 5 ? "text-right" : "text-left")}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {summary.anomaly_windows.map((w: any, i: number) => (
+                    <tr key={i} className="border-t border-grey-150">
+                      <td className="px-3 py-1 font-mono text-grey-800">
+                        {w.original} <span className={cn("ml-1 font-sans text-2xs font-semibold", w.direction === "low" ? "text-red-700" : "text-black")}>{w.direction === "low" ? "▼ low" : "▲ high"}</span>
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-1 text-grey-600">{w.start ? `${w.start.slice(0, 19).replace("T", " ")} → ${w.end.slice(11, 19)}` : `rows ${w.start_row}–${w.end_row}`}</td>
+                      <td className="px-3 py-1 text-right tabular-nums text-grey-600">{dur(w.duration_s)}</td>
+                      <td className="px-3 py-1 text-right tabular-nums text-black">{w.samples}</td>
+                      <td className="whitespace-nowrap px-3 py-1 text-right tabular-nums text-black">{fmt(w.min)}{w.max !== w.min ? `–${fmt(w.max)}` : ""} {w.unit !== "unit unknown" ? w.unit : ""}</td>
+                      <td className="px-3 py-1 text-right tabular-nums text-grey-600">{fmt(w.typical)}</td>
+                      <td className="px-3 py-1 text-grey-600">
+                        {Object.entries(w.other_channels).map(([k, v]: [string, any]) => `${k} ${fmt(v.inside)} (${fmt(v.outside)})`).join(" · ") || "–"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+
+        {meta.warnings?.length > 0 && <IssueList issues={meta.warnings.map((m: string) => ({ severity: "warning", message: m, column: null }))} />}
       </CardContent>
     </Card>
   );

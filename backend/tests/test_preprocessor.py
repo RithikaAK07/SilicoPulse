@@ -79,7 +79,10 @@ def test_cnc_telemetry_ingest_does_not_touch_execution_dataset(client, h):
     assert t["active"] and t["meta"]["outcome"] is None and t["meta"]["rows"] == 200
     assert {c["original"] for c in t["meta"]["channels"]} == {"vibration_g", "motor_temp_c", "spindle_rpm"}
     assert "failed" not in t["summary"]["series"]["channels"] and "outcome" not in t["summary"]["series"]["channels"]
-    assert all(u["message"] == "Required field not available for this analysis." for u in t["summary"]["unavailable"])
+    # telemetry analytics, not execution analytics: nothing is reported as "unavailable"
+    assert "unavailable" not in t["summary"] and t["meta"]["dataset_type"] == "industrial_telemetry" and t["meta"]["pipeline"] == "telemetry"
+    assert t["summary"]["dataset_type"]["pipeline"] == "telemetry" and "anomaly windows" in t["summary"]["dataset_type"]["analyses"]
+    assert all(c["health"]["status"] in {"stable", "watch", "attention"} for c in t["summary"]["channels"])
     assert t["meta"]["preprocessing_version"] and t["meta"]["original_filename"] == "CNC #1 • Health.csv"
     after = client.get("/api/dataset/status", headers=h).json()
     assert after["source"] == before["source"] and after.get("rows") == before.get("rows")
@@ -230,7 +233,10 @@ def test_missing_timestamp_and_outcome():
     p = preprocess(csv_bytes(df), "no_ts.csv")["parts"][0]
     msgs = " ".join(i["message"] for i in p["issues"])
     assert "No timestamp column detected" in msgs and "PASS/FAIL outcome is not present" in msgs
-    assert p["data_type"] == "measurement_table" and p["telemetry"]["available"] and not p["execution"]["available"]
+    assert p["data_type"] == "measurement_table" and not p["execution"]["available"]
+    # telemetry needs time-stamped samples: a clear validation reason instead of a silent row-order fallback
+    assert not p["telemetry"]["available"] and "No timestamp column detected" in p["telemetry"]["reason"]
+    assert p["dataset_type"] is None and p["pipeline"] is None
 
 
 def test_missing_optional_fields_still_execution():
@@ -327,3 +333,49 @@ def test_detected_columns_values():
     assert any("3 column headers but no data rows" in i["message"] for i in hdr["issues"])
     single = preprocess(RAW_CSVS["single_column.csv"], "s.csv")["parts"][0]
     assert single["columns"][0]["name"] == "value" and not single["execution"]["available"] and single["execution"]["reason"]
+
+
+# ---------------------------------------------------------------- dataset classification + telemetry branch
+def test_dataset_classification_routes_to_the_right_pipeline(client, h):
+    sample = client.get("/api/download-sample-csv", headers=h).content
+    ex = preprocess(sample, "sample.csv")["parts"][0]
+    assert ex["dataset_type"] == "execution" and ex["pipeline"] == "execution" and ex["execution"]["available"]
+    tel = preprocess(cnc_csv(120), "renamed_without_hint.csv")["parts"][0]  # classified by fields, not by file name
+    assert tel["dataset_type"] == "industrial_telemetry" and tel["pipeline"] == "telemetry"
+    generic = preprocess(("ts,metric_a,metric_b\n" + "\n".join(f"2026-01-01 00:{i // 60:02d}:{i % 60:02d},{(i * 0.37) % 11:.3f},{(i * 1.13) % 7 + 0.5:.3f}" for i in range(80))).encode(),
+                         "g.csv")["parts"][0]
+    assert generic["dataset_type"] == "time_series_telemetry" and generic["pipeline"] == "telemetry"
+
+
+def test_telemetry_ingest_errors_are_explicit(client, h):
+    no_ts = csv_bytes(pl.DataFrame({"vibration_g": np.linspace(0.1, 0.5, 60), "motor_temp_c": np.linspace(40, 50, 60)}))
+    pv = client.post("/api/upload/preview", files={"file": ("no_ts.csv", no_ts)}, headers=h).json()
+    r = client.post("/api/upload/ingest", data={"upload_id": pv["upload_id"], "mode": "telemetry",
+                                                "mapping": json.dumps({"timestamp": None, "roles": {"vibration_g": "telemetry"}})}, headers=h)
+    assert r.status_code == 422 and "needs a timestamp column" in r.json()["detail"]
+    pv = client.post("/api/upload/preview", files={"file": ("cnc.csv", cnc_csv(60))}, headers=h).json()
+    r = client.post("/api/upload/ingest", data={"upload_id": pv["upload_id"], "mode": "telemetry", "mapping": json.dumps(
+        {"timestamp": "Timestamp", "roles": {"vibration_g": "context", "motor_temp_c": "ignore", "spindle_rpm": "ignore"}})}, headers=h)
+    assert r.status_code == 422 and "No telemetry channels" in r.json()["detail"]
+    # a telemetry file sent to the execution pipeline is refused, never given invented PASS/FAIL labels
+    r = client.post("/api/upload/ingest", data={"upload_id": pv["upload_id"], "mode": "execution"}, headers=h)
+    assert r.status_code == 422 and "telemetry-only" in r.json()["detail"]
+
+
+def test_telemetry_anomaly_windows_and_health_from_real_values():
+    from app.preprocessor import _telemetry_mapping
+    from app.preprocessor.mapper import detect_roles
+    from app.preprocessor.normalizer import normalize_telemetry
+    from app.telemetry import summarize
+    rows = [f"2026-10-05T15:{i // 6:02d}:{(i % 6) * 10:02d}Z,{0.40 + (i % 3) / 100},{48 + (i % 4) / 4},{0 if 30 <= i < 40 else 2400 + (i % 5)}" for i in range(120)]
+    df = pl.read_csv(io.BytesIO((CNC_HEADER + "\n".join(rows)).encode()))
+    tm = _telemetry_mapping(detect_roles(df))
+    frame, meta = normalize_telemetry(df, tm["timestamp"], tm["roles"], {})
+    meta["dataset_type"] = "industrial_telemetry"
+    s = summarize(frame, meta)
+    w = s["anomaly_windows"]
+    assert s["anomaly_windows_total"] == 1 and w[0]["original"] == "spindle_rpm" and w[0]["direction"] == "low"
+    assert w[0]["samples"] == 10 and w[0]["start_row"] == 30 and w[0]["max"] == 0 and w[0]["duration_s"] == 90
+    assert set(w[0]["other_channels"]) == {"vibration_g", "motor_temp_c"}
+    health = {c["original"]: c["health"]["status"] for c in s["channels"]}
+    assert health == {"vibration_g": "stable", "motor_temp_c": "stable", "spindle_rpm": "attention"}

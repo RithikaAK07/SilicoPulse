@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
-import { Bot, BrainCircuit, Cpu, Database, Dices, LayoutDashboard, Menu, SearchCode, ShieldCheck, Sparkles, Upload, X } from "lucide-react";
+import { Activity, Bot, BrainCircuit, Cpu, Database, Dices, LayoutDashboard, Menu, SearchCode, ShieldCheck, Sparkles, Upload, X } from "lucide-react";
 import { useMeta } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { cn, num } from "@/lib/utils";
@@ -16,6 +16,7 @@ const NAV = [
   { href: "/insights", label: "Evidence & Guardrails", icon: ShieldCheck, q: "Trust" },
   { href: "/copilot", label: "AI Copilot", icon: Bot, q: "NL query" },
   { href: "/upload", label: "CSV Data Upload", icon: Upload, q: "Ingest" },
+  { href: "/telemetry", label: "Telemetry Health", icon: Activity, q: "Machines" },
   { href: "/generator", label: "Dataset Generator", icon: Database, q: "Synthetic" },
 ];
 

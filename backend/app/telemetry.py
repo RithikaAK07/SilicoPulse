@@ -2,8 +2,9 @@
 
 Kept separate from the execution-log store: activating a telemetry dataset never replaces the
 active execution dataset, never trains the failure model and never invents outcome labels.
-Every statistic is computed from measured values only; analyses that need an outcome are
-reported as unavailable.
+Every statistic is computed from measured values only. Execution analyses (PASS/FAIL, configuration,
+seed, failure signatures) belong to the execution pipeline and are simply not part of this one; the
+dataset-type registry (preprocessor/dataset_types.py) lists what each pipeline provides.
 """
 from __future__ import annotations
 
@@ -15,20 +16,18 @@ import numpy as np
 import polars as pl
 
 from .config import DATA_DIR
+from .preprocessor.dataset_types import describe
 
 TELEMETRY_PATH = DATA_DIR / "telemetry.parquet"
 TELEMETRY_META_PATH = DATA_DIR / "telemetry_meta.json"
 MAX_POINTS = 600
 ROBUST_Z = 3.5
+MAX_WINDOWS = 25
+# channel health rules (deterministic; shown to the user with each status)
+ATTENTION_ANOMALY_SHARE, WATCH_ANOMALY_SHARE = 0.05, 0.0
+ATTENTION_DRIFT_SD, WATCH_DRIFT_SD = 1.0, 0.5
 
-UNAVAILABLE = {
-    "PASS/FAIL rate": "outcome",
-    "Failure prediction / risk model": "outcome",
-    "Configuration recommendation": "outcome",
-    "Root cause by failure signature": "error_signature",
-    "Seed / determinism analysis": "seed",
-}
-REQUIRED_MSG = "Required field not available for this analysis."
+
 
 
 def _channel_stats(frame: pl.DataFrame, ch: dict, has_ts: bool) -> dict:
@@ -61,6 +60,78 @@ def _channel_stats(frame: pl.DataFrame, ch: dict, has_ts: bool) -> dict:
     return out
 
 
+def _robust_flags(vals: np.ndarray) -> tuple[np.ndarray, float]:
+    """Boolean mask of samples outside the robust band (|z| > ROBUST_Z, median/MAD); NaN = missing."""
+    ok = ~np.isnan(vals)
+    flags = np.zeros(len(vals), dtype=bool)
+    if ok.sum() < 3:
+        return flags, float("nan")
+    med = float(np.median(vals[ok]))
+    mad = float(np.median(np.abs(vals[ok] - med)))
+    if mad > 0:
+        flags[ok] = np.abs(0.6745 * (vals[ok] - med) / mad) > ROBUST_Z
+    return flags, med
+
+
+def anomaly_windows(frame: pl.DataFrame, channels: list[dict], has_ts: bool) -> list[dict]:
+    """Contiguous runs of anomalous samples per channel (rows are in time order), with what the other
+    channels did meanwhile. Purely descriptive: no cause is inferred."""
+    out = []
+    cols = {c["name"]: frame[c["name"]].cast(pl.Float64).fill_null(float("nan")).to_numpy() for c in channels}
+    ts = frame["timestamp"] if has_ts else None
+    for ch in channels:
+        vals = cols[ch["name"]]
+        flags, med = _robust_flags(vals)
+        if not flags.any():
+            continue
+        edges = np.flatnonzero(np.diff(np.concatenate([[0], flags.astype(np.int8), [0]])))
+        for a, b in zip(edges[::2], edges[1::2]):  # [a, b) anomalous run
+            seg = vals[a:b]
+            w = {"channel": ch["name"], "original": ch["original"], "unit": ch["unit"], "samples": int(b - a),
+                 "start_row": int(a), "end_row": int(b - 1), "min": float(np.nanmin(seg)), "max": float(np.nanmax(seg)),
+                 "median": float(np.nanmedian(seg)), "direction": "low" if float(np.nanmedian(seg)) < med else "high",
+                 "typical": med}
+            if ts is not None:
+                t0, t1 = ts[int(a)], ts[int(b - 1)]
+                w["start"] = t0.isoformat() if t0 is not None else None
+                w["end"] = t1.isoformat() if t1 is not None else None
+                w["duration_s"] = (t1 - t0).total_seconds() if t0 is not None and t1 is not None else None
+            during = {}
+            for other in channels:
+                if other["name"] == ch["name"]:
+                    continue
+                o = cols[other["name"]]
+                inside, outside = o[a:b], np.concatenate([o[:a], o[b:]])
+                if np.isfinite(inside).any() and np.isfinite(outside).any():
+                    during[other["original"]] = {"inside": float(np.nanmean(inside)), "outside": float(np.nanmean(outside))}
+            w["other_channels"] = during
+            out.append(w)
+    out.sort(key=lambda w: (-w["samples"], w["start_row"]))
+    return out
+
+
+def channel_health(stats: dict, windows: list[dict]) -> dict:
+    """stable / watch / attention from anomaly share and drift, with the reasons that triggered it."""
+    n = stats.get("count") or 0
+    share = (stats.get("anomalies") or 0) / n if n else 0.0
+    std = stats.get("std") or 0.0
+    drift_sd = abs(stats["trend_change_over_span"]) / std if std and stats.get("trend_change_over_span") is not None else 0.0
+    mine = [w for w in windows if w["channel"] == stats["name"]]
+    reasons = []
+    if share > WATCH_ANOMALY_SHARE:
+        lows, highs = sum(w["direction"] == "low" for w in mine), sum(w["direction"] == "high" for w in mine)
+        reasons.append(f"{stats['anomalies']} samples ({share:.0%}) outside the normal band in {len(mine)} window(s)"
+                       + (f": {lows} low" if lows else "") + (f"{', ' if lows and highs else ': ' if highs else ''}{highs} high" if highs else ""))
+    if drift_sd >= WATCH_DRIFT_SD:
+        reasons.append(f"level drifted by {drift_sd:.1f} standard deviations over the recording")
+    status = ("attention" if share >= ATTENTION_ANOMALY_SHARE or drift_sd >= ATTENTION_DRIFT_SD
+              else "watch" if reasons else "stable")
+    return {"status": status, "anomaly_share": round(share, 4), "drift_sd": round(drift_sd, 3),
+            "reasons": reasons or ["no samples outside the normal band and no material drift"],
+            "rule": f"attention: ≥{ATTENTION_ANOMALY_SHARE:.0%} anomalous samples or drift ≥{ATTENTION_DRIFT_SD:g} SD; "
+                    f"watch: any anomalous sample or drift ≥{WATCH_DRIFT_SD:g} SD"}
+
+
 def summarize(frame: pl.DataFrame, meta: dict) -> dict:
     has_ts = "timestamp" in frame.columns and frame["timestamp"].drop_nulls().len() > 0
     channels = [_channel_stats(frame, ch, has_ts) for ch in meta["channels"]]
@@ -91,9 +162,13 @@ def summarize(frame: pl.DataFrame, meta: dict) -> dict:
     series = {"x": x, "x_kind": "time" if has_ts else "row", "step": k,
               "channels": {c["name"]: [None if v is None or not np.isfinite(v) else round(float(v), 6) for v in pts[c["name"]].to_list()]
                            for c in meta["channels"]}}
-    unavailable = [{"analysis": a, "missing_field": f, "message": REQUIRED_MSG} for a, f in UNAVAILABLE.items()]
+    windows = anomaly_windows(frame, meta["channels"], has_ts)
+    for c in channels:
+        if c.get("count"):
+            c["health"] = channel_health(c, windows)
     return {"rows": len(frame), "channels": channels, "timing": timing, "correlations": corr[:15], "series": series,
-            "unavailable": unavailable}
+            "anomaly_windows": windows[:MAX_WINDOWS], "anomaly_windows_total": len(windows),
+            "dataset_type": describe(meta.get("dataset_type") or "industrial_telemetry")}
 
 
 class TelemetryStore:

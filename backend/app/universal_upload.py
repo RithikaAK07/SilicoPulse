@@ -23,7 +23,8 @@ from . import upload_handler as uh
 from .auth import get_current_user, require_permission
 from .preprocessor import PREPROCESSOR_VERSION, SUPPORTED_LABEL, PreprocessError, execution_frame, load_part, preprocess
 from .preprocessor.execution import assess_outcome
-from .preprocessor.mapper import detect_roles
+from .preprocessor.dataset_types import dataset_type_of, pipeline_of
+from .preprocessor.mapper import classify, detect_roles
 from .preprocessor.models import MAX_UPLOAD_BYTES
 from .preprocessor.normalizer import normalize_telemetry
 from .preprocessor.zip_handler import safe_display_name
@@ -152,16 +153,23 @@ async def universal_ingest(
         if not role_map:
             from .preprocessor import _telemetry_mapping
             role_map = _telemetry_mapping(roles)["roles"]
+        if not ts:
+            raise HTTPException(422, "Telemetry ingestion needs a timestamp column: none was detected or selected. "
+                                     "Select the timestamp column, or add one to the file.")
         if not any(r == "telemetry" for c, r in role_map.items() if c != ts):
-            raise HTTPException(422, "Select at least one numeric measurement column as telemetry.")
+            raise HTTPException(422, "No telemetry channels: select at least one numeric measurement column as telemetry.")
         frame, nmeta = normalize_telemetry(table.frame, ts, role_map, table.invalid_numeric)
+        if "timestamp" not in frame.columns:
+            raise HTTPException(422, f"Column '{ts}' could not be read as timestamps. Select another timestamp column.")
         if not any(frame[c["name"]].drop_nulls().len() for c in nmeta["channels"]):
             raise HTTPException(422, "The selected telemetry columns contain no numeric values.")
         columns = [{"original": r["name"], "normalized": next((p["normalized"] for p in nmeta["provenance"] if p["original"] == r["name"]), None),
                     "semantic_role": "timestamp" if r["name"] == ts else role_map.get(r["name"], "ignore"),
                     "detected_role": r["role"], "confidence": r["confidence"], "dtype": r["dtype"], "missing": r["missing"],
                     "unit": (r.get("unit") or "unit unknown") if role_map.get(r["name"]) == "telemetry" else None} for r in roles]
-        meta = {**provenance, "data_type": "telemetry", "rows": len(frame), "columns": columns, "channels": nmeta["channels"],
+        dtype = classify(roles, table.kind, False)
+        dataset_type = dataset_type_of(dtype) if pipeline_of(dataset_type_of(dtype)) == "telemetry" else "time_series_telemetry"
+        meta = {**provenance, "data_type": "telemetry", "dataset_type": dataset_type, "pipeline": "telemetry", "rows": len(frame), "columns": columns, "channels": nmeta["channels"],
                 "context": nmeta["context"], "logs": nmeta["logs"], "timestamp": nmeta["timestamp"], "warnings": nmeta["warnings"],
                 "transforms": nmeta["provenance"], "outcome": None, "outcome_note": "PASS/FAIL outcome is not present; none was inferred."}
         status = telemetry_store.activate(frame, meta)

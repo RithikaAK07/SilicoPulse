@@ -377,7 +377,7 @@ export function UploadTab() {
       )}
 
       {telemetry?.active && (
-        <TelemetryResult status={telemetry} onClear={clearTelemetry} canClear={canUpload} clearing={clearing} justIngested={telemetryIngested && stage === "done"} />
+        <TelemetryResult status={telemetry} onClear={clearTelemetry} canClear={canUpload} clearing={clearing} justIngested={telemetryIngested && stage === "done"} showDashboardLink />
       )}
 
       {preview && mapping && (stage === "mapping" || stage === "ingesting") && (
